@@ -31,7 +31,12 @@ Structure the script in **scenes**:
 
 Hard rules:
 
-- Cite the record's URL verbatim once in THE COMPANY scene.
+- In the spoken narration, cite the source by **domain only** — say
+  "according to the SEC's filing on sec.gov" or "the order published on
+  sec.gov". **Never read the full URL aloud**, never speak the path, the
+  filing accession number formatted as a URL, or any query parameters.
+  The full {url} is provided to you only so it can go in the YouTube
+  description, not the narration.
 - Use "the SEC alleges" / "according to the order" — these are mostly
   settlements where the respondent neither admits nor denies findings. Honor
   that.

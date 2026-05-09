@@ -34,8 +34,11 @@ Required structure:
 
 Hard rules:
 
-- Cite the record's URL verbatim once in the SETUP scene as "according to the
-  NTSB record at {url}" or similar.
+- In the spoken narration, cite the source by **domain only** — say
+  "according to the NTSB record at data.ntsb.gov" or "the report on
+  data.ntsb.gov shows…". **Never read the full URL aloud**, never speak the
+  path, the case number, or any query parameters. The full {url} is provided
+  to you only so it can go in the YouTube description, not the narration.
 - Use only facts present in the source. If a critical fact is missing, say so
   rather than invent.
 - Never name minors. Use "a juvenile passenger" or similar.

@@ -31,7 +31,11 @@ Structure the script in **scenes** for an editor to assemble:
 
 Hard rules:
 
-- Cite the record's URL verbatim once in THE PARTIES scene.
+- In the spoken narration, cite the source by **domain only** — say "the
+  filing on courtlistener.com" or "the DOJ press release on justice.gov".
+  **Never read the full URL aloud**, never speak the docket number formatted
+  as a URL, the path, or any query parameters. The full {url} is provided
+  to you only so it can go in the YouTube description, not the narration.
 - Treat unconvicted defendants with the presumption of innocence in every
   sentence. Use "alleged," "accused," "the indictment claims."
 - Never name minors. Anonymize victims unless they have publicly identified
