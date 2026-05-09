@@ -1,4 +1,9 @@
-"""End-to-end orchestrator."""
+"""End-to-end orchestrator.
+
+Daily run, per enabled channel:
+  - Pick top N records, render long-form + paired Short for each.
+  - Pick the next M records, render standalone Shorts (no long-form parent).
+"""
 
 from __future__ import annotations
 
@@ -20,7 +25,7 @@ from .maps import location_from_record, map_for_location
 from .render import SceneAsset, assemble_video, panels_needed_for
 from .score import score_pending
 from .script import write_script
-from .shorts import make_short
+from .shorts import make_short, make_standalone_short
 from .thumbnail import make_thumbnail
 from .transcribe import merge_srt
 from .upload.youtube import post_comment, set_thumbnail, upload_caption, upload_video
@@ -38,43 +43,66 @@ def run_daily() -> None:
 
     with connect(settings.db_path) as conn:
         run_id = open_run(conn)
-        summary = {"ingested": {}, "scored": 0, "produced": [], "errors": []}
+        summary = {"ingested": {}, "scored": 0, "produced": [], "shorts_only": [], "errors": []}
 
         try:
             summary["ingested"] = ingest.run_all_for_channels(settings, conn)
             summary["scored"] = score_pending(settings, conn)
 
-            global_produced = 0
             for channel in settings.channels:
                 if not channel.enabled:
                     continue
-                target = channel.videos_per_run
 
-                for n in range(target):
-                    if global_produced >= settings.max_videos_per_run:
-                        log().info("Hit DOCKET_MAX_VIDEOS_PER_RUN cap (%s)", settings.max_videos_per_run)
-                        break
+                # ---- Long-form loop (each spawns a paired Short) ----
+                produced = 0
+                for n in range(channel.videos_per_run):
                     try:
                         result = produce_one_for_channel(settings, conn, channel, slot=n)
                         if result is None:
-                            log().info("[%s] no more eligible records (slot %d/%d)",
-                                       channel.slug, n, target)
+                            log().info("[%s] no more eligible records (long slot %d)",
+                                       channel.slug, n)
                             break
                         summary["produced"].append(result)
-                        global_produced += 1
+                        produced += 1
                     except Exception as e:
-                        log().exception("[%s] slot %d failed: %s", channel.slug, n, e)
+                        log().exception("[%s] long slot %d failed: %s", channel.slug, n, e)
                         summary["errors"].append({"channel": channel.slug, "slot": n, "error": str(e)})
+
+                # ---- Extra standalone Shorts ----
+                extra_shorts = max(0, channel.shorts_per_run - produced)
+                if channel.shorts_per_run and channel.make_shorts:
+                    log().info("[%s] producing %d standalone Shorts (target=%d, longs=%d)",
+                               channel.slug, extra_shorts, channel.shorts_per_run, produced)
+                for n in range(extra_shorts):
+                    try:
+                        result = produce_standalone_short_for_channel(
+                            settings, conn, channel, slot=n,
+                        )
+                        if result is None:
+                            log().info("[%s] no more eligible records (short slot %d)",
+                                       channel.slug, n)
+                            break
+                        summary["shorts_only"].append(result)
+                    except Exception as e:
+                        log().exception("[%s] short slot %d failed: %s", channel.slug, n, e)
+                        summary["errors"].append(
+                            {"channel": channel.slug, "short_slot": n, "error": str(e)})
 
             status = "ok" if not summary["errors"] else "partial"
             close_run(conn, run_id, status, json.dumps(summary, default=str))
         except Exception as e:
             log().exception("Run failed: %s", e)
-            close_run(conn, run_id, "failed", json.dumps({"fatal": str(e), "tb": traceback.format_exc()}))
+            close_run(conn, run_id, "failed",
+                      json.dumps({"fatal": str(e), "tb": traceback.format_exc()}))
             raise
 
-    log().info("=== Run complete: %d produced ===", len(summary["produced"]))
+    log().info("=== Run complete: %d longs + %d standalone shorts ===",
+               len(summary["produced"]), len(summary["shorts_only"]))
 
+
+# =============================================================================
+# Long-form (with paired short)
+# =============================================================================
 
 def produce_one_for_channel(
     settings: Settings,
@@ -82,28 +110,28 @@ def produce_one_for_channel(
     channel: Channel,
     slot: int = 0,
 ) -> dict | None:
-    log().info("[%s] selecting top record (slot %d) …", channel.slug, slot)
+    log().info("[%s] long slot %d — selecting top record …", channel.slug, slot)
     candidates = top_records_for_channel(conn, channel_slug=channel.slug, limit=5, min_total=18)
     if not candidates:
         return None
 
     record, score = candidates[0]
     log().info(
-        "[%s] selected record %s — drama=%s novelty=%s vis=%s — %r",
-        channel.slug, record.id, score.drama, score.novelty, score.visualization, record.title[:80],
+        "[%s] selected record %s (%s) — drama=%s novelty=%s vis=%s — %r",
+        channel.slug, record.id, record.source,
+        score.drama, score.novelty, score.visualization, record.title[:80],
     )
 
     if score.flags.get("sealed") or score.flags.get("minor_involved") or score.flags.get("tragedy_only"):
-        log().info("[%s] record %s flagged: %s — skipping (will not retry)",
-                   channel.slug, record.id, score.flags)
+        log().info("[%s] record %s flagged: %s — skipping", channel.slug, record.id, score.flags)
         prod_id = create_production(conn, record_id=record.id, channel_slug=channel.slug)
         mark_production_failed(conn, prod_id, f"flagged: {json.dumps(score.flags)}")
         return None
 
-    return _produce_pipeline(settings, conn, channel, record, score)
+    return _produce_long_form(settings, conn, channel, record, score)
 
 
-def _produce_pipeline(
+def _produce_long_form(
     settings: Settings,
     conn: sqlite3.Connection,
     channel: Channel,
@@ -115,7 +143,7 @@ def _produce_pipeline(
     work_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        # ---- 1. SCRIPT ----
+        # SCRIPT
         script = write_script(settings.anthropic_api_key, channel, record)
         if script.refused:
             log().info("[%s] writer refused: %s", channel.slug, script.refused_reason)
@@ -133,7 +161,7 @@ def _produce_pipeline(
         )
         update_production(conn, prod_id, status="scripted", script_path=str(script_path))
 
-        # ---- 2. VOICE + per-scene SRT ----
+        # VOICE + per-scene SRT
         voiced = render_voiceover(
             api_key=settings.openai_api_key,
             script=script,
@@ -145,17 +173,17 @@ def _produce_pipeline(
             raise RuntimeError("voiceover produced no audio")
         narration_scenes = [s for s in script.scenes if s.narration.strip()]
 
-        # ---- 3. RECORD CONTEXT (for aircraft-specific imagery) ----
+        # Aircraft / vehicle context
         record_context = _record_context(record)
         log().info("  record context: %s", record_context or "(none)")
 
-        # ---- 4. LOCATION MAP (single image, fed into setup-scene panel pool) ----
+        # Location map (inserted in setup scene)
         location_str = location_from_record(record.raw_text, _safe_json(record.raw_json))
         location_map: Path | None = None
         if location_str:
             location_map = map_for_location(location_str, out_dir=work_dir / "visuals" / "map")
 
-        # ---- 5. VISUALS — multiple per scene ----
+        # VISUALS
         visuals_dir = work_dir / "visuals"
         scene_assets: list[SceneAsset] = []
         for i, scene in enumerate(narration_scenes):
@@ -172,11 +200,8 @@ def _produce_pipeline(
                 scene_id=scene.id,
                 record_context=record_context,
             )
-
-            # Inject the location map as the FIRST panel of the setup scene.
             if scene.id == "setup" and location_map and location_map.exists():
                 visuals = [location_map] + visuals[:max(1, n_panels - 1)]
-
             if not visuals:
                 raise RuntimeError(f"no visuals for scene {scene.id}")
 
@@ -188,19 +213,16 @@ def _produce_pipeline(
                 srt_text=vs.srt_text,
             ))
 
-        # ---- 6. RENDER LONG-FORM ----
+        # RENDER LONG-FORM
         video_path = work_dir / "video.mp4"
         assemble_video(settings, channel=channel, scene_assets=scene_assets, out_path=video_path)
         update_production(conn, prod_id, status="rendered", video_path=str(video_path))
 
-        # Build a master SRT for caption-track upload (timestamps shifted to
-        # global timeline). Burn-in already happened per-scene during render.
         master_srt = _master_srt(scene_assets, channel)
         master_srt_path = work_dir / "captions.srt"
         if master_srt:
             master_srt_path.write_text(master_srt, encoding="utf-8")
 
-        # Description with accurate chapter timestamps
         actual_description = _description_with_timestamps(
             base_description=script.description,
             scenes=narration_scenes,
@@ -208,7 +230,7 @@ def _produce_pipeline(
             channel=channel,
         )
 
-        # ---- 7. THUMBNAIL ----
+        # THUMBNAIL
         thumb_path = work_dir / "thumbnail.png"
         make_thumbnail(
             anthropic_key=settings.anthropic_api_key,
@@ -219,7 +241,7 @@ def _produce_pipeline(
             out_path=thumb_path,
         )
 
-        # ---- 8. SHORT (recap-style with Whisper captions) ----
+        # PAIRED SHORT
         short_path: Path | None = None
         if channel.make_shorts:
             try:
@@ -237,7 +259,7 @@ def _produce_pipeline(
                 log().warning("[%s] short render failed (continuing): %s", channel.slug, e)
                 short_path = None
 
-        # ---- 9. UPLOAD ----
+        # UPLOAD
         if settings.dry_run:
             log().info("[%s] DRY-RUN: skipping upload. Output: %s", channel.slug, video_path)
             update_production(conn, prod_id, status="rendered", thumbnail_path=str(thumb_path))
@@ -245,7 +267,7 @@ def _produce_pipeline(
                 "channel": channel.slug, "title": script.title,
                 "video_path": str(video_path),
                 "short_path": str(short_path) if short_path else None,
-                "uploaded": False,
+                "uploaded": False, "kind": "long",
             }
 
         refresh_token = settings.yt_refresh_tokens.get(channel.slug)
@@ -264,7 +286,6 @@ def _produce_pipeline(
             privacy=channel.youtube.get("privacy", "public"),
         )
 
-        # Thumbnail (channel must be verified or this 403s — caught & logged).
         try:
             set_thumbnail(
                 refresh_token=refresh_token,
@@ -274,9 +295,8 @@ def _produce_pipeline(
                 thumbnail_path=thumb_path,
             )
         except Exception as e:
-            log().warning("thumbnail upload failed (channel needs verification?): %s", e)
+            log().warning("thumbnail upload failed: %s", e)
 
-        # Caption track (toggle-able; in addition to the burn-in)
         if master_srt and master_srt_path.exists():
             upload_caption(
                 refresh_token=refresh_token,
@@ -286,7 +306,6 @@ def _produce_pipeline(
                 srt_path=master_srt_path,
             )
 
-        # Pinned-style discussion comment
         post_comment(
             refresh_token=refresh_token,
             client_id=settings.google_client_id,
@@ -295,7 +314,6 @@ def _produce_pipeline(
             text=_discussion_comment(record, channel),
         )
 
-        # Short upload
         short_video_id: str | None = None
         if short_path and short_path.exists():
             try:
@@ -327,6 +345,7 @@ def _produce_pipeline(
             "url": f"https://youtube.com/watch?v={long_video_id}",
             "short_id": short_video_id,
             "short_url": f"https://youtube.com/shorts/{short_video_id}" if short_video_id else None,
+            "kind": "long",
         }
 
     except Exception as e:
@@ -334,16 +353,112 @@ def _produce_pipeline(
         raise
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Standalone Shorts (no long-form parent)
+# =============================================================================
+
+def produce_standalone_short_for_channel(
+    settings: Settings,
+    conn: sqlite3.Connection,
+    channel: Channel,
+    slot: int = 0,
+) -> dict | None:
+    log().info("[%s] short slot %d — selecting top record …", channel.slug, slot)
+    candidates = top_records_for_channel(conn, channel_slug=channel.slug, limit=5, min_total=15)
+    if not candidates:
+        return None
+
+    record, score = candidates[0]
+    log().info(
+        "[%s] standalone short — record %s (%s) — total=%s — %r",
+        channel.slug, record.id, record.source,
+        score.drama + score.novelty + score.visualization, record.title[:80],
+    )
+
+    if score.flags.get("sealed") or score.flags.get("minor_involved") or score.flags.get("tragedy_only"):
+        log().info("[%s] record %s flagged: %s — skipping", channel.slug, record.id, score.flags)
+        prod_id = create_production(conn, record_id=record.id, channel_slug=channel.slug)
+        mark_production_failed(conn, prod_id, f"flagged: {json.dumps(score.flags)}")
+        return None
+
+    return _produce_standalone_short(settings, conn, channel, record, score)
+
+
+def _produce_standalone_short(
+    settings: Settings,
+    conn: sqlite3.Connection,
+    channel: Channel,
+    record: Record,
+    score: Score,
+) -> dict | None:
+    prod_id = create_production(conn, record_id=record.id, channel_slug=channel.slug)
+    work_dir = settings.output_dir / channel.slug / f"short_{prod_id:06d}_{slugify(record.title, max_len=50)}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        record_context = _record_context(record)
+        short_path = work_dir / "short.mp4"
+        make_standalone_short(
+            settings=settings,
+            record=record,
+            channel=channel,
+            record_context=record_context,
+            work_dir=work_dir,
+            out_path=short_path,
+        )
+        update_production(conn, prod_id, status="rendered", video_path=str(short_path))
+
+        if settings.dry_run:
+            log().info("[%s] DRY-RUN: skipping short upload. Output: %s", channel.slug, short_path)
+            return {
+                "channel": channel.slug, "title": _short_title_from_record(record),
+                "short_path": str(short_path), "uploaded": False, "kind": "short",
+            }
+
+        refresh_token = settings.yt_refresh_tokens.get(channel.slug)
+        if not refresh_token:
+            raise RuntimeError(f"no YT refresh token for channel {channel.slug}")
+
+        short_title = _shorts_title(_short_title_from_record(record))
+        short_video_id = upload_video(
+            refresh_token=refresh_token,
+            client_id=settings.google_client_id,
+            client_secret=settings.google_client_secret,
+            file_path=short_path,
+            title=short_title,
+            description=_short_only_description(record, channel),
+            tags=_short_tags_for_record(record, channel),
+            category_id=str(channel.youtube.get("category_id", "27")),
+            privacy=channel.youtube.get("privacy", "public"),
+        )
+
+        mark_production_complete(
+            conn, prod_id,
+            youtube_video_id=short_video_id,
+            video_path=str(short_path),
+            thumbnail_path="",
+        )
+        return {
+            "channel": channel.slug,
+            "title": short_title,
+            "short_id": short_video_id,
+            "short_url": f"https://youtube.com/shorts/{short_video_id}",
+            "kind": "short",
+        }
+
+    except Exception as e:
+        mark_production_failed(conn, prod_id, str(e))
+        raise
+
+
+# =============================================================================
 # Helpers
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 _AIRCRAFT_PREFER_SCENES = {"hook", "setup", "incident", "investigation"}
 
 
 def _record_context(record: Record) -> str:
-    """Pull a short, search-friendly context string from the record (e.g.
-    'Air Tractor AT-602 aviation incident'). Used to bias visual queries."""
     raw = _safe_json(record.raw_json)
     if isinstance(raw, dict):
         make = (raw.get("VehicleMake") or "").strip()
@@ -367,10 +482,6 @@ def _fetch_panel_visuals(
     scene_id: str,
     record_context: str = "",
 ) -> list[Path]:
-    """Fetch N visuals for a scene, varying queries for diversity. When the
-    record carries an aircraft type and the scene benefits from it, we
-    prepend that aircraft string to each query so we get the *specific*
-    aircraft instead of generic stock."""
     out: list[Path] = []
     seen: set[str] = set()
 
@@ -385,8 +496,6 @@ def _fetch_panel_visuals(
 
     use_context = record_context and scene_id in _AIRCRAFT_PREFER_SCENES
     if use_context:
-        # Prepend the specific aircraft to each query so Pexels finds the
-        # actual model rather than generic small-plane stock.
         candidates = [f"{record_context} {q}" for q in candidates] + candidates
 
     while len(candidates) < n_panels:
@@ -414,8 +523,6 @@ def _fetch_panel_visuals(
 
 
 def _master_srt(scene_assets: list[SceneAsset], channel: Channel) -> str:
-    """Build a global SRT by shifting each scene's SRT by its cumulative
-    offset (intro sting + sum of previous scene durations)."""
     intro_offset = 0.0
     intro = (Path(__file__).resolve().parent.parent
              / "assets" / "intros" / (channel.intro_sting or ""))
@@ -495,6 +602,42 @@ def _short_description(long_title: str, long_video_id: str, record: Record, chan
     )
 
 
+def _short_only_description(record: Record, channel: Channel) -> str:
+    brand = channel.brand_name or channel.name
+    return (
+        f"Subscribe to {brand} for daily public-record breakdowns.\n\n"
+        f"Source: {record.title}\n{record.url}\n"
+        f"Published: {record.published_at}\n\n"
+        "#Shorts"
+    )
+
+
+def _short_title_from_record(record: Record) -> str:
+    """Build a 60-90 char title from the raw record. Standalone shorts don't
+    get a Claude-generated title (saves a Sonnet call)."""
+    base = (record.title or "Public record breakdown").strip()
+    return base[:88].rstrip()
+
+
+def _short_tags_for_record(record: Record, channel: Channel) -> list[str]:
+    base_tags = list(channel.youtube.get("tags") or [])
+    src = record.source
+    if src.startswith("ntsb"):
+        base_tags.extend(["aviation", "NTSB", "plane crash"])
+    elif src == "sec":
+        base_tags.extend(["securities fraud", "SEC enforcement", "finance"])
+    elif src in ("courtlistener", "doj"):
+        base_tags.extend(["federal court", "indictment", "true crime"])
+    base_tags.append("shorts")
+    # Dedupe preserving order
+    seen, out = set(), []
+    for t in base_tags:
+        if t.lower() not in seen:
+            seen.add(t.lower())
+            out.append(t)
+    return out[:30]
+
+
 def _with_source_block(description: str, record: Record) -> str:
     src_block = (
         "\n\n— Source —\n"
@@ -512,10 +655,10 @@ def _with_source_block(description: str, record: Record) -> str:
 def _discussion_comment(record: Record, channel: Channel) -> str:
     brand = channel.brand_name or channel.name
     return (
-        f"What do you think the bigger lesson here is — pilot procedure, "
-        f"regulatory blind spot, or manufacturer accountability? Drop your take.\n\n"
+        f"What's the bigger lesson here — procedure failure, regulatory blind "
+        f"spot, or accountability gap? Drop your take.\n\n"
         f"📄 Source: {record.url}\n"
-        f"🔔 Subscribe to {brand} — new case files every day."
+        f"🔔 Subscribe to {brand} — new case files daily."
     )
 
 

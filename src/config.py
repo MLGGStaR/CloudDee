@@ -38,6 +38,8 @@ class Channel:
     make_shorts: bool = False
     brand_name: str = ""           # CTA-friendly brand (defaults to channel name if empty)
     music_by_scene_id: dict[str, str] = field(default_factory=dict)
+    shorts_per_run: int = 0        # total shorts per batch (0 → equals videos_per_run when make_shorts)
+    prompts_by_source: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -94,6 +96,8 @@ def _load_channels() -> list[Channel]:
                 make_shorts=bool(c.get("make_shorts", False)),
                 brand_name=str(c.get("brand_name") or c.get("name") or "").strip(),
                 music_by_scene_id=dict(c.get("music_by_scene_id") or {}),
+                shorts_per_run=int(c.get("shorts_per_run", 0)),
+                prompts_by_source=dict(c.get("prompts_by_source") or {}),
             )
         )
     return out

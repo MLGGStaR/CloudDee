@@ -1,20 +1,21 @@
-"""Generate a 9:16 vertical YouTube Short.
+"""Generate 9:16 vertical YouTube Shorts.
 
-Pipeline:
-  1. Claude condenses the full long-form narration into a ~140-word recap.
-  2. OpenAI TTS voices it.
-  3. Whisper transcribes the recap audio for word-accurate captions (replaces
-     the old "3-word chunk evenly time-spaced" approximation).
-  4. ffmpeg builds a 1080x1920 vertical timeline with:
-        - Multiple panels of visuals borrowed from the long-form's pool
-        - Burned-in TikTok-style subtitles (large, center-bottom)
-        - 3-second "Subscribe to {brand}" outro card
-  5. Audio is loudnorm'd to -16 LUFS, matching the long form.
+Two entry points:
+
+  make_short(...)             — recap-style Short paired with a long-form video
+                                (uses the long-form's narration + visual pool).
+
+  make_standalone_short(...)  — Short generated directly from a public record,
+                                with no long-form parent.
+
+Both share `_build_short_video()` which handles audio voicing, Whisper
+transcription, vertical body assembly, outro card, and master loudness.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -23,10 +24,12 @@ from anthropic import Anthropic
 from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from .config import Channel, load_prompt
+from .config import Channel, Settings, load_prompt
+from .db import Record
+from .images import fetch_visual
 from .render import SceneAsset
 from .transcribe import reflow_srt_max_words, transcribe_to_srt
-from .utils import ffprobe_duration, log, render_template, require_ffmpeg
+from .utils import ffprobe_duration, log, render_template, require_ffmpeg, truncate
 
 
 VERTICAL_W = 1080
@@ -35,7 +38,12 @@ PANEL_TARGET_SEC = 8.0
 RECAP_MODEL = "claude-sonnet-4-6"
 TTS_MODEL = "tts-1-hd"
 OUTRO_DURATION = 3.0
+STANDALONE_PANEL_COUNT = 7
 
+
+# =============================================================================
+# Public entry points
+# =============================================================================
 
 def make_short(
     *,
@@ -47,29 +55,115 @@ def make_short(
     channel: Channel,
     out_path: Path,
 ) -> Path:
+    """Recap Short paired with a long-form video. Visuals come from the
+    long-form's panel pool (cycling for variety)."""
     require_ffmpeg()
     if not scenes:
         raise RuntimeError("no scenes provided to make_short")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-
     brand = channel.brand_name or channel.name
 
-    # 1) Recap script
     recap_text = _write_recap(
         anthropic_key,
         long_form_title=long_form_title,
         full_narration=long_form_narration,
         brand_name=brand,
     )
-    log().info("  recap: %d words", len(recap_text.split()))
+    log().info("  short recap: %d words", len(recap_text.split()))
 
-    # 2) Voice the recap + 3) transcribe for accurate captions
+    visual_pool: list[Path] = []
+    for sa in scenes:
+        visual_pool.extend(sa.visuals)
+    if not visual_pool:
+        raise RuntimeError("no visuals in long-form pool")
+
+    return _build_short_video(
+        narration=recap_text,
+        visual_pool=visual_pool,
+        channel=channel,
+        openai_key=openai_key,
+        out_path=out_path,
+    )
+
+
+def make_standalone_short(
+    *,
+    settings: Settings,
+    record: Record,
+    channel: Channel,
+    record_context: str,
+    work_dir: Path,
+    out_path: Path,
+) -> Path:
+    """Short generated directly from a record. Fetches its own visuals."""
+    require_ffmpeg()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    brand = channel.brand_name or channel.name
+
+    # 1) Generate narration from the record itself (no long-form to recap)
+    narration = _write_standalone_short_script(
+        settings.anthropic_api_key,
+        record=record,
+        brand_name=brand,
+    )
+    if narration is None:
+        raise RuntimeError("standalone-short writer refused this record")
+    log().info("  standalone short: %d words / record %s",
+               len(narration.split()), record.id)
+
+    # 2) Fetch a vertical-friendly visual pool from Pexels (+ AI fallback)
+    visuals_dir = work_dir / "visuals"
+    visual_pool: list[Path] = []
+    queries = _short_visual_queries(record, record_context)
+    for q in queries[:STANDALONE_PANEL_COUNT * 2]:
+        v = fetch_visual(
+            settings,
+            b_roll_prompt=q,
+            out_dir=visuals_dir,
+            prefer_video=False,
+            allow_ai=True,
+        )
+        if v is None:
+            continue
+        if str(v) in {str(p) for p in visual_pool}:
+            continue
+        visual_pool.append(v)
+        if len(visual_pool) >= STANDALONE_PANEL_COUNT:
+            break
+    if not visual_pool:
+        raise RuntimeError(f"no visuals could be sourced for record {record.id}")
+
+    return _build_short_video(
+        narration=narration,
+        visual_pool=visual_pool,
+        channel=channel,
+        openai_key=settings.openai_api_key,
+        out_path=out_path,
+    )
+
+
+# =============================================================================
+# Shared body — voice + transcribe + render
+# =============================================================================
+
+def _build_short_video(
+    *,
+    narration: str,
+    visual_pool: list[Path],
+    channel: Channel,
+    openai_key: str,
+    out_path: Path,
+) -> Path:
+    """Voice the narration, transcribe for captions, render the vertical
+    timeline + outro, master loudness."""
+    brand = channel.brand_name or channel.name
     with tempfile.TemporaryDirectory(prefix="docket_short_") as td:
         td_path = Path(td)
         recap_audio = td_path / "recap.wav"
         _synthesize(
             openai_key,
-            text=recap_text,
+            text=narration,
             voice=channel.voice,
             speed=channel.voice_speed,
             out_path=recap_audio,
@@ -78,7 +172,7 @@ def make_short(
 
         try:
             srt_text = transcribe_to_srt(openai_key, recap_audio)
-            srt_text = reflow_srt_max_words(srt_text, max_words=4)  # punchier captions for shorts
+            srt_text = reflow_srt_max_words(srt_text, max_words=4)
         except Exception as e:
             log().warning("Shorts transcribe failed (no captions): %s", e)
             srt_text = ""
@@ -86,13 +180,7 @@ def make_short(
         if srt_text:
             srt_path.write_text(srt_text, encoding="utf-8")
 
-        # 4) Pool of visuals from the long-form
-        visual_pool: list[Path] = []
-        for sa in scenes:
-            visual_pool.extend(sa.visuals)
-        if not visual_pool:
-            raise RuntimeError("no visuals available for short")
-
+        # Pick panels evenly spaced through the visual pool
         n_panels = max(4, int(round(recap_duration / PANEL_TARGET_SEC)))
         if len(visual_pool) < n_panels:
             visual_pool = (visual_pool * ((n_panels // len(visual_pool)) + 1))[:n_panels]
@@ -108,7 +196,6 @@ def make_short(
             out_path=body_path,
         )
 
-        # 5) Outro card
         outro_path = td_path / "outro.mp4"
         _render_outro(
             brand=brand,
@@ -116,7 +203,6 @@ def make_short(
             out_path=outro_path,
         )
 
-        # 6) Concat + master loudness
         concat_path = td_path / "concat.mp4"
         _concat([body_path, outro_path], out_path=concat_path)
         _finalize_loudness(concat_path, out_path=out_path)
@@ -125,9 +211,9 @@ def make_short(
     return out_path
 
 
-# -----------------------------------------------------------------------------
-# Recap script
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Script generation
+# =============================================================================
 
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=2, max=15), reraise=True)
 def _write_recap(api_key: str, *, long_form_title: str, full_narration: str, brand_name: str) -> str:
@@ -157,9 +243,77 @@ def _write_recap(api_key: str, *, long_form_title: str, full_narration: str, bra
     return narration
 
 
-# -----------------------------------------------------------------------------
+@retry(stop=stop_after_attempt(2), wait=wait_exponential(min=2, max=15), reraise=True)
+def _write_standalone_short_script(
+    api_key: str,
+    *,
+    record: Record,
+    brand_name: str,
+) -> str | None:
+    body = render_template(
+        load_prompt("short_standalone"),
+        source=record.source,
+        title=truncate(record.title, 250),
+        url=record.url,
+        published_at=record.published_at,
+        text=truncate(record.raw_text, 20_000),
+        brand_name=brand_name,
+    )
+    client = Anthropic(api_key=api_key, max_retries=2, timeout=30.0)
+    msg = client.messages.create(
+        model=RECAP_MODEL,
+        max_tokens=800,
+        temperature=0.7,
+        system="You return only valid JSON objects. No prose. No markdown fences.",
+        messages=[{"role": "user", "content": body}],
+    )
+    text = "".join(b.text for b in msg.content if hasattr(b, "text")).strip()
+    if text.startswith("```"):
+        text = text.split("```", 2)[1]
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+    data = json.loads(text)
+    if data.get("refuse"):
+        log().info("standalone short writer refused: %s", data.get("reason"))
+        return None
+    narration = (data.get("narration") or "").strip()
+    if not narration:
+        raise RuntimeError("standalone short returned empty narration")
+    return narration
+
+
+def _short_visual_queries(record: Record, record_context: str) -> list[str]:
+    """Generate a sequence of search queries for the short's visuals.
+    Mixes specific (aircraft model + crash) and generic (location + investigation).
+    """
+    title = (record.title or "").strip()
+    queries: list[str] = []
+    if record_context:
+        queries.append(f"{record_context} aircraft")
+        queries.append(f"{record_context} cockpit")
+    if title:
+        queries.append(title[:80])
+    # Generic per-source fallbacks
+    if record.source.startswith("ntsb_aviation"):
+        queries.extend(["plane crash investigation", "small aircraft runway",
+                        "aviation cockpit", "FAA inspector wreckage", "airfield night"])
+    elif record.source.startswith("ntsb_marine"):
+        queries.extend(["maritime accident", "coast guard rescue",
+                        "ship wreck", "harbor at night"])
+    elif record.source == "sec":
+        queries.extend(["wall street stock chart", "office building skyline",
+                        "court documents desk", "executive courtroom"])
+    elif record.source in ("courtlistener", "doj"):
+        queries.extend(["federal courthouse exterior", "judge gavel courtroom",
+                        "lawyer briefcase", "FBI badge agent", "evidence box files"])
+    else:
+        queries.extend(["government documents", "investigator file", "federal seal"])
+    return queries
+
+
+# =============================================================================
 # Voice
-# -----------------------------------------------------------------------------
+# =============================================================================
 
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=2, max=10), reraise=True)
 def _synthesize(api_key: str, *, text: str, voice: str, speed: float, out_path: Path) -> None:
@@ -174,9 +328,9 @@ def _synthesize(api_key: str, *, text: str, voice: str, speed: float, out_path: 
         response.stream_to_file(out_path)
 
 
-# -----------------------------------------------------------------------------
-# Vertical body
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Vertical body / outro / concat / loudness
+# =============================================================================
 
 def _render_vertical_body(
     *,
@@ -200,7 +354,6 @@ def _render_vertical_body(
         joined = td_path / "joined.mp4"
         _concat(panels, out_path=joined)
 
-        # Burn captions and mux audio.
         if srt_path is not None and srt_path.exists():
             srt_filter_path = str(srt_path).replace("\\", "/").replace(":", r"\:")
             v_filter = (
@@ -263,10 +416,6 @@ def _render_vertical_panel(visual: Path, *, duration: float, panel_index: int, o
     ]
     _run(cmd)
 
-
-# -----------------------------------------------------------------------------
-# Outro / concat / loudness
-# -----------------------------------------------------------------------------
 
 def _ffmpeg_escape(text: str) -> str:
     return (

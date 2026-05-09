@@ -48,7 +48,10 @@ class ScriptResult:
 
 def write_script(api_key: str, channel: Channel, record: Record) -> ScriptResult:
     client = Anthropic(api_key=api_key)
-    prompt = load_prompt(channel.script_prompt)
+    prompt_name = (channel.prompts_by_source.get(record.source)
+                   or channel.script_prompt)
+    prompt = load_prompt(prompt_name)
+    log().info("  script prompt: %s (source=%s)", prompt_name, record.source)
     target_words = int(channel.target_minutes * 150)
 
     body = render_template(
