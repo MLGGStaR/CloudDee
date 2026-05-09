@@ -117,3 +117,85 @@ def set_thumbnail(
         media_body=MediaFileUpload(str(thumbnail_path), mimetype="image/png"),
     ).execute()
     log().info("  thumbnail set on %s", video_id)
+
+
+def post_comment(
+    *,
+    refresh_token: str,
+    client_id: str,
+    client_secret: str,
+    video_id: str,
+    text: str,
+) -> str | None:
+    """Post a top-level comment from the channel on its own video.
+
+    Returns the comment thread id, or None on failure (we never want a
+    failed comment to fail the run).
+
+    NOTE: Pinning a comment requires a manual action in YouTube Studio —
+    the YouTube Data API does not currently expose pinning. The comment
+    will appear from the channel itself, which gets it visual prominence
+    in the comments tab even before a manual pin.
+    """
+    try:
+        yt = _client_for_channel(
+            refresh_token=refresh_token,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        body = {
+            "snippet": {
+                "videoId": video_id,
+                "topLevelComment": {
+                    "snippet": {"textOriginal": text[:9500]},
+                },
+            }
+        }
+        resp = yt.commentThreads().insert(part="snippet", body=body).execute()
+        cid = resp.get("id")
+        log().info("  posted comment %s on %s", cid, video_id)
+        return cid
+    except HttpError as e:
+        log().warning("comment post failed for %s: %s", video_id, e)
+        return None
+    except Exception as e:
+        log().warning("comment post failed for %s: %s", video_id, e)
+        return None
+
+
+def upload_caption(
+    *,
+    refresh_token: str,
+    client_id: str,
+    client_secret: str,
+    video_id: str,
+    srt_path: Path,
+    language: str = "en",
+    name: str = "English",
+) -> str | None:
+    """Upload an SRT caption track for a video. Returns caption id or None."""
+    try:
+        yt = _client_for_channel(
+            refresh_token=refresh_token,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        body = {
+            "snippet": {
+                "videoId": video_id,
+                "language": language,
+                "name": name,
+                "isDraft": False,
+            }
+        }
+        media = MediaFileUpload(str(srt_path), mimetype="application/octet-stream")
+        resp = yt.captions().insert(part="snippet", body=body, media_body=media).execute()
+        cid = resp.get("id")
+        log().info("  uploaded caption track %s on %s", cid, video_id)
+        return cid
+    except HttpError as e:
+        log().warning("caption upload failed for %s: %s", video_id, e)
+        return None
+    except Exception as e:
+        log().warning("caption upload failed for %s: %s", video_id, e)
+        return None

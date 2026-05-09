@@ -1,19 +1,9 @@
-"""End-to-end orchestrator.
-
-Daily run:
-  1. Ingest from every source needed by enabled channels.
-  2. Score every unscored record with Haiku.
-  3. For each enabled channel, produce up to `videos_per_run` videos. Each
-     video uses a different top-scored record. After the long-form is
-     rendered, optionally generate and upload a 9:16 Short recap.
-
-Idempotent. Reruns won't double-publish a record on a channel.
-"""
+"""End-to-end orchestrator."""
 
 from __future__ import annotations
 
 import json
-import math
+import re
 import sqlite3
 import traceback
 from datetime import datetime, timezone
@@ -26,14 +16,16 @@ from .db import (
     mark_production_failed, open_run, top_records_for_channel, update_production,
 )
 from .images import fetch_visual
+from .maps import location_from_record, map_for_location
 from .render import SceneAsset, assemble_video, panels_needed_for
 from .score import score_pending
-from .script import write_script, ScriptResult
+from .script import write_script
 from .shorts import make_short
 from .thumbnail import make_thumbnail
-from .upload.youtube import set_thumbnail, upload_video
+from .transcribe import merge_srt
+from .upload.youtube import post_comment, set_thumbnail, upload_caption, upload_video
 from .utils import ffprobe_duration, log, setup_logging, slugify
-from .voice import render_voiceover
+from .voice import VoicedScene, render_voiceover
 
 
 def run_daily() -> None:
@@ -141,26 +133,36 @@ def _produce_pipeline(
         )
         update_production(conn, prod_id, status="scripted", script_path=str(script_path))
 
-        # ---- 2. VOICE ----
-        audio_paths = render_voiceover(
+        # ---- 2. VOICE + per-scene SRT ----
+        voiced = render_voiceover(
             api_key=settings.openai_api_key,
             script=script,
             voice=channel.voice,
             speed=channel.voice_speed,
             out_dir=work_dir / "audio",
         )
-        if not audio_paths:
+        if not voiced:
             raise RuntimeError("voiceover produced no audio")
-        update_production(conn, prod_id, status="voiced", audio_path=str(audio_paths[0].parent))
+        narration_scenes = [s for s in script.scenes if s.narration.strip()]
 
-        # ---- 3. VISUALS — multiple per scene for motion ----
+        # ---- 3. RECORD CONTEXT (for aircraft-specific imagery) ----
+        record_context = _record_context(record)
+        log().info("  record context: %s", record_context or "(none)")
+
+        # ---- 4. LOCATION MAP (single image, fed into setup-scene panel pool) ----
+        location_str = location_from_record(record.raw_text, _safe_json(record.raw_json))
+        location_map: Path | None = None
+        if location_str:
+            location_map = map_for_location(location_str, out_dir=work_dir / "visuals" / "map")
+
+        # ---- 5. VISUALS — multiple per scene ----
         visuals_dir = work_dir / "visuals"
         scene_assets: list[SceneAsset] = []
-        narration_scenes = [s for s in script.scenes if s.narration.strip()]
         for i, scene in enumerate(narration_scenes):
-            audio_p = audio_paths[i] if i < len(audio_paths) else audio_paths[-1]
-            scene_seconds = ffprobe_duration(audio_p)
+            vs = voiced[i] if i < len(voiced) else voiced[-1]
+            scene_seconds = ffprobe_duration(vs.audio_path)
             n_panels = panels_needed_for(scene_seconds)
+
             visuals = _fetch_panel_visuals(
                 settings,
                 scene_b_roll=scene.b_roll or scene.narration[:200],
@@ -168,29 +170,45 @@ def _produce_pipeline(
                 n_panels=n_panels,
                 out_dir=visuals_dir / f"scene_{i:02d}",
                 scene_id=scene.id,
+                record_context=record_context,
             )
+
+            # Inject the location map as the FIRST panel of the setup scene.
+            if scene.id == "setup" and location_map and location_map.exists():
+                visuals = [location_map] + visuals[:max(1, n_panels - 1)]
+
             if not visuals:
                 raise RuntimeError(f"no visuals for scene {scene.id}")
+
             scene_assets.append(SceneAsset(
-                audio_path=audio_p,
+                audio_path=vs.audio_path,
                 visuals=visuals,
                 title_overlay=scene.label or scene.id,
+                scene_id=scene.id,
+                srt_text=vs.srt_text,
             ))
 
-        # ---- 4. RENDER LONG-FORM ----
+        # ---- 6. RENDER LONG-FORM ----
         video_path = work_dir / "video.mp4"
         assemble_video(settings, channel=channel, scene_assets=scene_assets, out_path=video_path)
         update_production(conn, prod_id, status="rendered", video_path=str(video_path))
 
-        # Compute accurate timestamps from actual scene audio durations.
+        # Build a master SRT for caption-track upload (timestamps shifted to
+        # global timeline). Burn-in already happened per-scene during render.
+        master_srt = _master_srt(scene_assets, channel)
+        master_srt_path = work_dir / "captions.srt"
+        if master_srt:
+            master_srt_path.write_text(master_srt, encoding="utf-8")
+
+        # Description with accurate chapter timestamps
         actual_description = _description_with_timestamps(
             base_description=script.description,
             scenes=narration_scenes,
-            audio_paths=audio_paths,
+            voiced=voiced,
             channel=channel,
         )
 
-        # ---- 5. THUMBNAIL ----
+        # ---- 7. THUMBNAIL ----
         thumb_path = work_dir / "thumbnail.png"
         make_thumbnail(
             anthropic_key=settings.anthropic_api_key,
@@ -201,7 +219,7 @@ def _produce_pipeline(
             out_path=thumb_path,
         )
 
-        # ---- 6. SHORT (recap-style) ----
+        # ---- 8. SHORT (recap-style with Whisper captions) ----
         short_path: Path | None = None
         if channel.make_shorts:
             try:
@@ -219,7 +237,7 @@ def _produce_pipeline(
                 log().warning("[%s] short render failed (continuing): %s", channel.slug, e)
                 short_path = None
 
-        # ---- 7. UPLOAD ----
+        # ---- 9. UPLOAD ----
         if settings.dry_run:
             log().info("[%s] DRY-RUN: skipping upload. Output: %s", channel.slug, video_path)
             update_production(conn, prod_id, status="rendered", thumbnail_path=str(thumb_path))
@@ -245,6 +263,8 @@ def _produce_pipeline(
             category_id=str(channel.youtube.get("category_id", "27")),
             privacy=channel.youtube.get("privacy", "public"),
         )
+
+        # Thumbnail (channel must be verified or this 403s — caught & logged).
         try:
             set_thumbnail(
                 refresh_token=refresh_token,
@@ -256,6 +276,26 @@ def _produce_pipeline(
         except Exception as e:
             log().warning("thumbnail upload failed (channel needs verification?): %s", e)
 
+        # Caption track (toggle-able; in addition to the burn-in)
+        if master_srt and master_srt_path.exists():
+            upload_caption(
+                refresh_token=refresh_token,
+                client_id=settings.google_client_id,
+                client_secret=settings.google_client_secret,
+                video_id=long_video_id,
+                srt_path=master_srt_path,
+            )
+
+        # Pinned-style discussion comment
+        post_comment(
+            refresh_token=refresh_token,
+            client_id=settings.google_client_id,
+            client_secret=settings.google_client_secret,
+            video_id=long_video_id,
+            text=_discussion_comment(record, channel),
+        )
+
+        # Short upload
         short_video_id: str | None = None
         if short_path and short_path.exists():
             try:
@@ -294,6 +334,29 @@ def _produce_pipeline(
         raise
 
 
+# -----------------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------------
+
+_AIRCRAFT_PREFER_SCENES = {"hook", "setup", "incident", "investigation"}
+
+
+def _record_context(record: Record) -> str:
+    """Pull a short, search-friendly context string from the record (e.g.
+    'Air Tractor AT-602 aviation incident'). Used to bias visual queries."""
+    raw = _safe_json(record.raw_json)
+    if isinstance(raw, dict):
+        make = (raw.get("VehicleMake") or "").strip()
+        model = (raw.get("VehicleModel") or "").strip()
+        if make and model:
+            return f"{make} {model}".strip()
+        if model:
+            return model
+        if make:
+            return make
+    return ""
+
+
 def _fetch_panel_visuals(
     settings: Settings,
     *,
@@ -302,14 +365,15 @@ def _fetch_panel_visuals(
     n_panels: int,
     out_dir: Path,
     scene_id: str,
+    record_context: str = "",
 ) -> list[Path]:
-    """Fetch N visuals for a single scene by varying the search query so we
-    get visual diversity, not 8 copies of the same stock photo."""
+    """Fetch N visuals for a scene, varying queries for diversity. When the
+    record carries an aircraft type and the scene benefits from it, we
+    prepend that aircraft string to each query so we get the *specific*
+    aircraft instead of generic stock."""
     out: list[Path] = []
     seen: set[str] = set()
 
-    # Build a sequence of varied queries from the b_roll direction. We split
-    # on commas / "and" / semicolons so each clause becomes its own search.
     base = scene_b_roll.strip()
     candidates: list[str] = []
     for part in re.split(r"[;,]| and ", base, flags=re.I):
@@ -318,7 +382,13 @@ def _fetch_panel_visuals(
             candidates.append(part)
     if not candidates:
         candidates = [base or scene_label]
-    # Pad with the scene label if we didn't get enough variety.
+
+    use_context = record_context and scene_id in _AIRCRAFT_PREFER_SCENES
+    if use_context:
+        # Prepend the specific aircraft to each query so Pexels finds the
+        # actual model rather than generic small-plane stock.
+        candidates = [f"{record_context} {q}" for q in candidates] + candidates
+
     while len(candidates) < n_panels:
         candidates.append(f"{candidates[len(candidates) % len(candidates)]} {scene_label}")
 
@@ -335,25 +405,45 @@ def _fetch_panel_visuals(
         )
         if v is None:
             continue
-        # Avoid the same exact file twice in one scene.
         if str(v) in seen:
             continue
         seen.add(str(v))
         out.append(v)
 
-    # Fallback: if every fetch returned None, throw — caller will raise.
     return out
+
+
+def _master_srt(scene_assets: list[SceneAsset], channel: Channel) -> str:
+    """Build a global SRT by shifting each scene's SRT by its cumulative
+    offset (intro sting + sum of previous scene durations)."""
+    intro_offset = 0.0
+    intro = (Path(__file__).resolve().parent.parent
+             / "assets" / "intros" / (channel.intro_sting or ""))
+    if channel.intro_sting and intro.exists():
+        try:
+            intro_offset = ffprobe_duration(intro)
+        except Exception:
+            intro_offset = 0.0
+
+    pieces: list[tuple[str, float]] = []
+    cursor = intro_offset
+    for sa in scene_assets:
+        if sa.srt_text.strip():
+            pieces.append((sa.srt_text, cursor))
+        try:
+            cursor += ffprobe_duration(sa.audio_path)
+        except Exception:
+            cursor += 30.0
+    return merge_srt(pieces)
 
 
 def _description_with_timestamps(
     *,
     base_description: str,
     scenes: list,
-    audio_paths: list[Path],
+    voiced: list[VoicedScene],
     channel: Channel,
 ) -> str:
-    """Append accurate scene timestamps to the YouTube description, computed
-    from the actual audio duration of each scene + the intro sting offset."""
     intro_offset = 0.0
     intro = (Path(__file__).resolve().parent.parent
              / "assets" / "intros" / (channel.intro_sting or ""))
@@ -366,12 +456,13 @@ def _description_with_timestamps(
     lines = ["", "— Chapters —"]
     cursor = intro_offset
     for i, scene in enumerate(scenes):
-        label = scene.label or scene.id
+        label = getattr(scene, "label", "") or scene.id
         lines.append(f"{_format_timestamp(cursor)} {label}")
         try:
-            cursor += ffprobe_duration(audio_paths[i] if i < len(audio_paths) else audio_paths[-1])
+            vs = voiced[i] if i < len(voiced) else voiced[-1]
+            cursor += ffprobe_duration(vs.audio_path)
         except Exception:
-            cursor += 30.0  # fallback if a probe fails
+            cursor += 30.0
     return (base_description or "").rstrip() + "\n".join(lines)
 
 
@@ -418,6 +509,20 @@ def _with_source_block(description: str, record: Record) -> str:
     return (description or "")[:4500] + src_block
 
 
-# Imported here at the bottom to avoid a circular-import quirk during
-# the Scene/SceneAsset refactor.
-import re  # noqa: E402
+def _discussion_comment(record: Record, channel: Channel) -> str:
+    brand = channel.brand_name or channel.name
+    return (
+        f"What do you think the bigger lesson here is — pilot procedure, "
+        f"regulatory blind spot, or manufacturer accountability? Drop your take.\n\n"
+        f"📄 Source: {record.url}\n"
+        f"🔔 Subscribe to {brand} — new case files every day."
+    )
+
+
+def _safe_json(raw_json: str | None) -> dict:
+    if not raw_json:
+        return {}
+    try:
+        return json.loads(raw_json)
+    except Exception:
+        return {}

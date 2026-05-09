@@ -1,24 +1,20 @@
 """Generate a 9:16 vertical YouTube Short.
 
-This is NOT just a clip of the long-form. It is a separately-written 55-second
-recap of the whole story, voiced fresh, with visuals borrowed from the long
-form's panel pool and distributed evenly across the recap audio. A 3-second
-"Subscribe to {brand}" outro card is appended at the end.
-
 Pipeline:
   1. Claude condenses the full long-form narration into a ~140-word recap.
-  2. OpenAI TTS voices it with the same channel voice.
-  3. ffmpeg builds a 1080x1920 vertical timeline using the long-form's
-     visuals as a panel pool, ~6 panels across the recap duration, each
-     with its own Ken Burns motion. Captions are burned in.
-  4. A separate 3-second outro is appended.
+  2. OpenAI TTS voices it.
+  3. Whisper transcribes the recap audio for word-accurate captions (replaces
+     the old "3-word chunk evenly time-spaced" approximation).
+  4. ffmpeg builds a 1080x1920 vertical timeline with:
+        - Multiple panels of visuals borrowed from the long-form's pool
+        - Burned-in TikTok-style subtitles (large, center-bottom)
+        - 3-second "Subscribe to {brand}" outro card
   5. Audio is loudnorm'd to -16 LUFS, matching the long form.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -29,12 +25,13 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .config import Channel, load_prompt
 from .render import SceneAsset
+from .transcribe import reflow_srt_max_words, transcribe_to_srt
 from .utils import ffprobe_duration, log, render_template, require_ffmpeg
 
 
 VERTICAL_W = 1080
 VERTICAL_H = 1920
-PANEL_TARGET_SEC = 8.0          # vertical panels can be a bit longer than long-form
+PANEL_TARGET_SEC = 8.0
 RECAP_MODEL = "claude-sonnet-4-6"
 TTS_MODEL = "tts-1-hd"
 OUTRO_DURATION = 3.0
@@ -50,7 +47,6 @@ def make_short(
     channel: Channel,
     out_path: Path,
 ) -> Path:
-    """Build a Short. Returns the path to the rendered .mp4."""
     require_ffmpeg()
     if not scenes:
         raise RuntimeError("no scenes provided to make_short")
@@ -58,7 +54,7 @@ def make_short(
 
     brand = channel.brand_name or channel.name
 
-    # 1) Recap script (~55s)
+    # 1) Recap script
     recap_text = _write_recap(
         anthropic_key,
         long_form_title=long_form_title,
@@ -67,7 +63,7 @@ def make_short(
     )
     log().info("  recap: %d words", len(recap_text.split()))
 
-    # 2) Voice the recap
+    # 2) Voice the recap + 3) transcribe for accurate captions
     with tempfile.TemporaryDirectory(prefix="docket_short_") as td:
         td_path = Path(td)
         recap_audio = td_path / "recap.wav"
@@ -80,7 +76,17 @@ def make_short(
         )
         recap_duration = ffprobe_duration(recap_audio)
 
-        # 3) Build vertical body using the long-form's visuals as a panel pool.
+        try:
+            srt_text = transcribe_to_srt(openai_key, recap_audio)
+            srt_text = reflow_srt_max_words(srt_text, max_words=4)  # punchier captions for shorts
+        except Exception as e:
+            log().warning("Shorts transcribe failed (no captions): %s", e)
+            srt_text = ""
+        srt_path = td_path / "recap.srt"
+        if srt_text:
+            srt_path.write_text(srt_text, encoding="utf-8")
+
+        # 4) Pool of visuals from the long-form
         visual_pool: list[Path] = []
         for sa in scenes:
             visual_pool.extend(sa.visuals)
@@ -88,11 +94,9 @@ def make_short(
             raise RuntimeError("no visuals available for short")
 
         n_panels = max(4, int(round(recap_duration / PANEL_TARGET_SEC)))
-        # Cycle through the pool if we need more panels than visuals.
         if len(visual_pool) < n_panels:
             visual_pool = (visual_pool * ((n_panels // len(visual_pool)) + 1))[:n_panels]
         else:
-            # Spread — pick visuals at evenly-spaced indices for variety.
             step = len(visual_pool) / n_panels
             visual_pool = [visual_pool[int(i * step)] for i in range(n_panels)]
 
@@ -100,11 +104,11 @@ def make_short(
         _render_vertical_body(
             visuals=visual_pool,
             audio=recap_audio,
-            narration=recap_text,
+            srt_path=srt_path if srt_text else None,
             out_path=body_path,
         )
 
-        # 4) Outro card
+        # 5) Outro card
         outro_path = td_path / "outro.mp4"
         _render_outro(
             brand=brand,
@@ -112,7 +116,7 @@ def make_short(
             out_path=outro_path,
         )
 
-        # 5) Concat + master loudness
+        # 6) Concat + master loudness
         concat_path = td_path / "concat.mp4"
         _concat([body_path, outro_path], out_path=concat_path)
         _finalize_loudness(concat_path, out_path=out_path)
@@ -171,10 +175,16 @@ def _synthesize(api_key: str, *, text: str, voice: str, speed: float, out_path: 
 
 
 # -----------------------------------------------------------------------------
-# Vertical body assembly
+# Vertical body
 # -----------------------------------------------------------------------------
 
-def _render_vertical_body(*, visuals: list[Path], audio: Path, narration: str, out_path: Path) -> None:
+def _render_vertical_body(
+    *,
+    visuals: list[Path],
+    audio: Path,
+    srt_path: Path | None,
+    out_path: Path,
+) -> None:
     duration = ffprobe_duration(audio)
     n = len(visuals)
     panel_duration = duration / n
@@ -190,13 +200,23 @@ def _render_vertical_body(*, visuals: list[Path], audio: Path, narration: str, o
         joined = td_path / "joined.mp4"
         _concat(panels, out_path=joined)
 
-        # Mux audio + caption overlay in one pass.
-        cap_filter = _captions_filter(narration, duration)
+        # Burn captions and mux audio.
+        if srt_path is not None and srt_path.exists():
+            srt_filter_path = str(srt_path).replace("\\", "/").replace(":", r"\:")
+            v_filter = (
+                f"subtitles='{srt_filter_path}':"
+                "force_style='Fontsize=20,Outline=3,Shadow=0,BorderStyle=1,"
+                "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+                "Alignment=2,MarginV=380,Bold=1'"
+            )
+        else:
+            v_filter = "null"
+
         cmd = [
             "ffmpeg", "-y",
             "-i", str(joined),
             "-i", str(audio),
-            "-filter_complex", f"[0:v]{cap_filter}[v]",
+            "-filter_complex", f"[0:v]{v_filter}[v]",
             "-map", "[v]", "-map", "1:a",
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
             "-c:a", "aac", "-b:a", "192k",
@@ -244,35 +264,9 @@ def _render_vertical_panel(visual: Path, *, duration: float, panel_index: int, o
     _run(cmd)
 
 
-def _captions_filter(narration: str, duration: float) -> str:
-    """Burned-in 2-3 word captions, evenly time-spaced. Sits in the lower
-    third area, big bold white with thick black border."""
-    chunks = _chunk_narration(narration, words_per_chunk=3)
-    if not chunks:
-        return "null"
-
-    per = duration / len(chunks)
-    parts: list[str] = []
-    for i, ch in enumerate(chunks):
-        start = i * per
-        end = (i + 1) * per
-        text = _ffmpeg_escape(ch.upper())
-        parts.append(
-            f"drawtext=text='{text}':"
-            f"fontsize=88:fontcolor=white:borderw=8:bordercolor=black:"
-            f"x=(w-text_w)/2:y=h*0.78:"
-            f"enable='between(t,{start:.2f},{end:.2f})'"
-        )
-    return ",".join(parts)
-
-
-def _chunk_narration(text: str, words_per_chunk: int = 3) -> list[str]:
-    words = re.findall(r"[A-Za-z0-9'.,$%-]+", text)
-    if not words:
-        return []
-    return [" ".join(words[i:i + words_per_chunk])
-            for i in range(0, len(words), words_per_chunk)]
-
+# -----------------------------------------------------------------------------
+# Outro / concat / loudness
+# -----------------------------------------------------------------------------
 
 def _ffmpeg_escape(text: str) -> str:
     return (
@@ -283,10 +277,6 @@ def _ffmpeg_escape(text: str) -> str:
             .replace(",", "\\,")
     )
 
-
-# -----------------------------------------------------------------------------
-# Outro
-# -----------------------------------------------------------------------------
 
 def _render_outro(*, brand: str, accent_color: str, out_path: Path) -> None:
     accent = (accent_color or "#0c2d48").lstrip("#") or "0c2d48"
@@ -316,10 +306,6 @@ def _render_outro(*, brand: str, accent_color: str, out_path: Path) -> None:
     _run(cmd)
 
 
-# -----------------------------------------------------------------------------
-# Concat / loudness
-# -----------------------------------------------------------------------------
-
 def _concat(parts: list[Path], *, out_path: Path) -> None:
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
         for p in parts:
@@ -338,7 +324,6 @@ def _concat(parts: list[Path], *, out_path: Path) -> None:
 
 
 def _finalize_loudness(video_in: Path, *, out_path: Path) -> None:
-    """Bring the whole audio track to -16 LUFS to match the long form."""
     cmd = [
         "ffmpeg", "-y",
         "-i", str(video_in),

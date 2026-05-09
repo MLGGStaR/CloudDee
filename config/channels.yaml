@@ -24,9 +24,17 @@ channels:
     voice_speed: 0.95
     script_prompt: script_aviation
     target_minutes: 8
-    music_bed: artmylife-powerful-dramatic-trailer-514242.mp3
     intro_sting: null
     accent_color: "#0c2d48"
+    # Per-scene music. Filenames in assets/music/. Falls back to music_bed.
+    music_bed: artmylife-powerful-dramatic-trailer-514242.mp3
+    music_by_scene_id:
+      hook: artmylife-powerful-dramatic-trailer-514242.mp3
+      setup: ikoliks_aj-acoustic-spring-mothers-day-music-320427.mp3
+      incident: artmylife-powerful-dramatic-trailer-514242.mp3
+      investigation: kontraa-water-afro-pop-music-445661.mp3
+      takeaway: ikoliks_aj-acoustic-spring-mothers-day-music-320427.mp3
+      outro: alec_koff-carnaval-484622.mp3
     youtube:
       category_id: "27"                          # Education
       tags: [aviation, ntsb, plane crash, aircraft incident, flight investigation]

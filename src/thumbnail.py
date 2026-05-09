@@ -56,6 +56,7 @@ def make_thumbnail(
         subtitle_text=concept.get("subtitle_text", ""),
         badge_text=concept.get("badge_text", ""),
         accent_color=channel.accent_color,
+        draw_circle=bool(concept.get("circle_subject")),
     )
     base_image_path.unlink(missing_ok=True)
     return out_path
@@ -110,36 +111,51 @@ def _composite(
     subtitle_text: str,
     badge_text: str,
     accent_color: str,
+    draw_circle: bool = True,
 ) -> None:
     img = Image.open(base_path).convert("RGB").resize((THUMB_W, THUMB_H), Image.LANCZOS)
+
+    # Optional red highlight circle (rule-of-thirds, upper-right area where
+    # the focal subject usually lives in our image_prompt outputs).
+    if draw_circle:
+        circle_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        cd = ImageDraw.Draw(circle_layer)
+        cx, cy = int(THUMB_W * 0.62), int(THUMB_H * 0.42)
+        r = 130
+        # Thick red ring (no fill).
+        cd.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(220, 30, 30, 255), width=10)
+        img = Image.alpha_composite(img.convert("RGBA"), circle_layer).convert("RGB")
 
     # Vignette over the bottom 60% to make text readable.
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw_ov = ImageDraw.Draw(overlay)
     for y in range(int(THUMB_H * 0.4), THUMB_H):
-        alpha = int(((y - THUMB_H * 0.4) / (THUMB_H * 0.6)) * 180)
+        alpha = int(((y - THUMB_H * 0.4) / (THUMB_H * 0.6)) * 200)
         draw_ov.line([(0, y), (THUMB_W, y)], fill=(0, 0, 0, alpha))
     img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(img)
 
-    title_font = _load_font(120)
-    subtitle_font = _load_font(48)
-    badge_font = _load_font(36)
+    # Bigger / bolder than before — 150 pt main, 56 pt subtitle.
+    title_font = _load_font(150)
+    subtitle_font = _load_font(56)
+    badge_font = _load_font(40)
 
-    # ---- Title (bottom-left, max ~3 lines) ----
+    # ---- Title (bottom-left, max ~2 lines, MASSIVE) ----
     title_top_y = THUMB_H  # default if no title rendered
     if title_text:
         title = title_text.upper()
-        wrapped = _wrap_text(title, title_font, max_width=int(THUMB_W * 0.85))
-        text = "\n".join(wrapped[:3])
+        wrapped = _wrap_text(title, title_font, max_width=int(THUMB_W * 0.85))[:2]
+        text = "\n".join(wrapped)
         x = 50
-        title_top_y = THUMB_H - 60 - 130 * len(wrapped[:3])
-        for dx in range(-4, 5, 2):
-            for dy in range(-4, 5, 2):
+        title_top_y = THUMB_H - 60 - 160 * len(wrapped)
+        # Black drop shadow first
+        for dx in range(-6, 7, 2):
+            for dy in range(-6, 7, 2):
                 draw.multiline_text((x + dx, title_top_y + dy), text,
-                                    font=title_font, fill="black", spacing=10)
+                                    font=title_font, fill="black", spacing=12)
+        # Yellow fill — high-CTR signal color, more attention-grabbing than white
         draw.multiline_text((x, title_top_y), text,
-                            font=title_font, fill="white", spacing=10)
+                            font=title_font, fill="#FFEB3B", spacing=12)
 
     # ---- Subtitle (above title) ----
     if subtitle_text:
