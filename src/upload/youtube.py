@@ -45,6 +45,21 @@ def _client_for_channel(
     return build("youtube", "v3", credentials=creds, cache_discovery=False)
 
 
+class YouTubeQuotaExceeded(RuntimeError):
+    """Raised when the YouTube Data API rejects a call with quotaExceeded.
+    Callers should treat this as 'stop attempting more uploads today'."""
+
+
+def _is_quota_exceeded(err: HttpError) -> bool:
+    try:
+        content = err.content.decode("utf-8", errors="ignore") if err.content else ""
+    except Exception:
+        content = ""
+    return ("quotaExceeded" in content
+            or "uploadLimitExceeded" in content
+            or err.resp.status == 403 and "quota" in content.lower())
+
+
 def upload_video(
     *,
     refresh_token: str,
@@ -92,6 +107,9 @@ def upload_video(
             if status:
                 log().info("  upload progress %d%%", int(status.progress() * 100))
         except HttpError as e:
+            if _is_quota_exceeded(e):
+                log().error("  YouTube daily quota exceeded — aborting further uploads this run")
+                raise YouTubeQuotaExceeded(str(e)) from e
             log().error("  upload error: %s", e)
             raise
     video_id = response["id"]

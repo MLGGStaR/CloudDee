@@ -28,7 +28,13 @@ from .script import write_script
 from .shorts import make_short, make_standalone_short
 from .thumbnail import make_thumbnail
 from .transcribe import merge_srt
-from .upload.youtube import post_comment, set_thumbnail, upload_caption, upload_video
+from .upload.youtube import (
+    YouTubeQuotaExceeded,
+    post_comment,
+    set_thumbnail,
+    upload_caption,
+    upload_video,
+)
 from .utils import ffprobe_duration, log, setup_logging, slugify
 from .voice import VoicedScene, render_voiceover
 
@@ -55,6 +61,7 @@ def run_daily() -> None:
 
                 # ---- Long-form loop (each spawns a paired Short) ----
                 produced = 0
+                quota_exhausted = False
                 for n in range(channel.videos_per_run):
                     try:
                         result = produce_one_for_channel(settings, conn, channel, slot=n)
@@ -64,13 +71,24 @@ def run_daily() -> None:
                             break
                         summary["produced"].append(result)
                         produced += 1
+                    except YouTubeQuotaExceeded as e:
+                        log().warning("[%s] YouTube quota exhausted at long slot %d — "
+                                      "aborting further uploads this run", channel.slug, n)
+                        summary["errors"].append(
+                            {"channel": channel.slug, "slot": n, "error": "quota_exceeded"})
+                        quota_exhausted = True
+                        break
                     except Exception as e:
                         log().exception("[%s] long slot %d failed: %s", channel.slug, n, e)
                         summary["errors"].append({"channel": channel.slug, "slot": n, "error": str(e)})
 
                 # ---- Extra standalone Shorts ----
                 extra_shorts = max(0, channel.shorts_per_run - produced)
-                if channel.shorts_per_run and channel.make_shorts:
+                if quota_exhausted:
+                    log().warning("[%s] skipping %d standalone Shorts — quota exhausted",
+                                  channel.slug, extra_shorts)
+                    extra_shorts = 0
+                elif channel.shorts_per_run and channel.make_shorts:
                     log().info("[%s] producing %d standalone Shorts (target=%d, longs=%d)",
                                channel.slug, extra_shorts, channel.shorts_per_run, produced)
                 for n in range(extra_shorts):
@@ -83,6 +101,12 @@ def run_daily() -> None:
                                        channel.slug, n)
                             break
                         summary["shorts_only"].append(result)
+                    except YouTubeQuotaExceeded as e:
+                        log().warning("[%s] YouTube quota exhausted at short slot %d — "
+                                      "aborting", channel.slug, n)
+                        summary["errors"].append(
+                            {"channel": channel.slug, "short_slot": n, "error": "quota_exceeded"})
+                        break
                     except Exception as e:
                         log().exception("[%s] short slot %d failed: %s", channel.slug, n, e)
                         summary["errors"].append(
