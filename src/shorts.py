@@ -38,7 +38,7 @@ PANEL_TARGET_SEC = 8.0
 RECAP_MODEL = "claude-sonnet-4-6"
 TTS_MODEL = "tts-1-hd"
 OUTRO_DURATION = 3.0
-STANDALONE_PANEL_COUNT = 7
+STANDALONE_PANEL_COUNT = 5    # ~11s per panel for a 55s short — still active
 
 
 # =============================================================================

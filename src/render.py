@@ -26,8 +26,11 @@ W = 1920
 H = 1080
 FPS = 30
 
-PANEL_TARGET_SEC = 6.5
-PANEL_MIN_SEC = 4.0
+# Tuned to ~10s/panel — gives ~48 panels for an 8-min video (vs the original
+# 1-per-scene). Reduces Pexels/AI image load by ~35% vs 6.5s/panel without
+# making the visuals feel static.
+PANEL_TARGET_SEC = 10.0
+PANEL_MIN_SEC = 5.0
 
 
 @dataclass
