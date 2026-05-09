@@ -21,6 +21,12 @@ concurrency:
   group: docket-daily
   cancel-in-progress: false
 
+# Opt every JavaScript action in this workflow into Node.js 24 today, instead
+# of waiting for GitHub to flip the default in June 2026. Removes the daily
+# "Node.js 20 deprecated" annotation.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   produce:
     runs-on: ubuntu-latest
