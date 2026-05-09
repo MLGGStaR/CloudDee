@@ -137,31 +137,48 @@ def top_records_for_channel(
     channel_slug: str,
     limit: int = 5,
     min_total: int = 18,
+    sources: list[str] | None = None,
 ) -> list[tuple[Record, Score]]:
     """Pick the highest-scored records for a channel that haven't been produced
-    for that channel yet. `min_total` is a quality floor across drama+novelty+vis."""
+    for that channel yet.
+
+    - `min_total` is a quality floor across drama+novelty+vis (out of 30).
+    - `sources` (optional) restricts records to specific source slugs. Required
+      for multi-topic channels; without it any unproduced record qualifies.
+
+    The legacy `niche_fit[channel_slug] >= 6` hard filter has been retired
+    because the channel can now be multi-topic; the scorer's per-topic
+    niche_fit is still used as a ranking signal (max value across topics).
+    """
+    src_clause = ""
+    src_params: list = []
+    if sources:
+        placeholders = ",".join("?" for _ in sources)
+        src_clause = f" AND r.source IN ({placeholders})"
+        src_params = list(sources)
+
+    sql = f"""
+        SELECT r.*, s.drama, s.novelty, s.visualization, s.niche_fit_json,
+               s.summary, s.flags_json, s.scored_at
+        FROM records r
+        JOIN scores s ON s.record_id = r.id
+        LEFT JOIN productions p
+             ON p.record_id = r.id AND p.channel_slug = ?
+        WHERE p.id IS NULL
+          AND (s.drama + s.novelty + s.visualization) >= ?
+          {src_clause}
+        ORDER BY (s.drama + s.novelty + s.visualization) DESC,
+                 r.published_at DESC
+        LIMIT ?
+    """
     rows = conn.execute(
-        """SELECT r.*, s.drama, s.novelty, s.visualization, s.niche_fit_json,
-                  s.summary, s.flags_json, s.scored_at
-           FROM records r
-           JOIN scores s ON s.record_id = r.id
-           LEFT JOIN productions p
-                ON p.record_id = r.id AND p.channel_slug = ?
-           WHERE p.id IS NULL
-             AND (s.drama + s.novelty + s.visualization) >= ?
-           ORDER BY (s.drama + s.novelty + s.visualization) DESC,
-                    json_extract(s.niche_fit_json, '$.' || ?) DESC NULLS LAST,
-                    r.published_at DESC
-           LIMIT ?""",
-        (channel_slug, min_total, channel_slug, limit * 4),
+        sql,
+        (channel_slug, min_total, *src_params, limit * 4),
     ).fetchall()
 
     out: list[tuple[Record, Score]] = []
     for r in rows:
         niche_fit = json.loads(r["niche_fit_json"] or "{}")
-        # Hard requirement: this channel must score >= 6 on niche fit.
-        if niche_fit.get(channel_slug, 0) < 6:
-            continue
         record = _row_to_record(r)
         score = Score(
             record_id=r["id"],

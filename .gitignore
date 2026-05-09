@@ -48,3 +48,10 @@ output/
 .idea/
 *.swp
 .DS_Store
+
+# Local dev scratch (logo/banner generation, smoke tests)
+_logo_concepts.py
+_banner_concepts.py
+_banner_v2.py
+_smoke*.py
+logo_concepts/

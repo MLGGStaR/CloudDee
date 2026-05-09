@@ -114,7 +114,10 @@ def status():
         for ch in settings.channels:
             if not ch.enabled:
                 continue
-            top = top_records_for_channel(conn, channel_slug=ch.slug, limit=3, min_total=15)
+            top = top_records_for_channel(
+                conn, channel_slug=ch.slug, limit=3, min_total=15,
+                sources=ch.sources or None,
+            )
             if not top:
                 continue
             t = Table(title=f"Top candidates · {ch.slug}")

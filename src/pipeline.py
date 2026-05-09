@@ -111,7 +111,10 @@ def produce_one_for_channel(
     slot: int = 0,
 ) -> dict | None:
     log().info("[%s] long slot %d — selecting top record …", channel.slug, slot)
-    candidates = top_records_for_channel(conn, channel_slug=channel.slug, limit=5, min_total=18)
+    candidates = top_records_for_channel(
+        conn, channel_slug=channel.slug, limit=5, min_total=18,
+        sources=channel.sources or None,
+    )
     if not candidates:
         return None
 
@@ -364,7 +367,10 @@ def produce_standalone_short_for_channel(
     slot: int = 0,
 ) -> dict | None:
     log().info("[%s] short slot %d — selecting top record …", channel.slug, slot)
-    candidates = top_records_for_channel(conn, channel_slug=channel.slug, limit=5, min_total=15)
+    candidates = top_records_for_channel(
+        conn, channel_slug=channel.slug, limit=5, min_total=15,
+        sources=channel.sources or None,
+    )
     if not candidates:
         return None
 
