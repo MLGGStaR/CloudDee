@@ -1,0 +1,93 @@
+name: docket-daily
+
+# Runs the full daily pipeline. Schedule is in UTC.
+# Default: 11:00 UTC = 06:00 ET / 03:00 PT — well after the prior US business
+# day has settled and most agencies have published.
+
+on:
+  schedule:
+    - cron: "0 11 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Skip YouTube upload"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write   # so we can commit the updated SQLite DB back to the repo
+
+concurrency:
+  group: docket-daily
+  cancel-in-progress: false
+
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      COURTLISTENER_API_TOKEN: ${{ secrets.COURTLISTENER_API_TOKEN }}
+      PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      YT_REFRESH_TOKENS_JSON: ${{ secrets.YT_REFRESH_TOKENS_JSON }}
+      DOCKET_DB_PATH: state/docket.db
+      DOCKET_OUTPUT_DIR: output
+      DOCKET_LOG_LEVEL: INFO
+      DOCKET_MAX_VIDEOS_PER_RUN: 3
+      DOCKET_DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Restore SQLite state from cache (faster than commit/push)
+        id: cache-state
+        uses: actions/cache@v4
+        with:
+          path: state
+          key: docket-state-${{ github.run_id }}
+          restore-keys: |
+            docket-state-
+
+      - name: Ensure state dir
+        run: mkdir -p state output
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pipeline
+        run: python cli.py daily
+
+      - name: Save state to cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: docket-state-${{ github.run_id }}
+
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-${{ github.run_id }}
+          path: |
+            output/**/script.json
+            output/**/thumbnail.png
+            state/docket.db
+          if-no-files-found: ignore
+          retention-days: 14

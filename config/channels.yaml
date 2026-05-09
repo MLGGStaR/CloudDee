@@ -1,0 +1,122 @@
+# Define each YouTube channel. The pipeline produces `videos_per_run` videos
+# per enabled channel per run.
+#
+# CURRENT MODE: one channel (Final Approach), 3 long-form + 3 shorts per day.
+# Re-enable the others below when you want to fan out.
+
+channels:
+
+  - slug: final-approach
+    name: "Final Approach"
+    enabled: true
+    videos_per_run: 3                            # produce N different stories per run
+    make_shorts: true                            # also cut a 9:16 short for each video
+    sources: [ntsb_aviation, faa]
+    niche_keywords:
+      - aviation
+      - flight
+      - aircraft
+      - pilot
+      - crash
+      - incident
+    voice: onyx                                  # OpenAI TTS voice
+    voice_speed: 0.95
+    script_prompt: script_aviation
+    target_minutes: 8
+    music_bed: artmylife-powerful-dramatic-trailer-514242.mp3
+    intro_sting: null
+    accent_color: "#0c2d48"
+    youtube:
+      category_id: "27"                          # Education
+      tags: [aviation, ntsb, plane crash, aircraft incident, flight investigation]
+      privacy: public
+
+# ---- Disabled by default; flip enabled: true to launch a second channel ----
+
+  - slug: verdict-files
+    name: "The Verdict Files"
+    enabled: false
+    videos_per_run: 1
+    make_shorts: true
+    sources: [courtlistener, doj]
+    niche_keywords:
+      - federal
+      - indictment
+      - sentenced
+      - fraud
+      - conspiracy
+      - guilty
+    voice: echo
+    voice_speed: 1.0
+    script_prompt: script_court
+    target_minutes: 9
+    music_bed: artmylife-powerful-dramatic-trailer-514242.mp3
+    intro_sting: null
+    accent_color: "#3d0c0c"
+    youtube:
+      category_id: "27"
+      tags: [federal court, true crime, indictment, fraud case, sentencing]
+      privacy: public
+
+  - slug: filed-under-wrong
+    name: "Filed Under Wrong"
+    enabled: false
+    videos_per_run: 1
+    make_shorts: true
+    sources: [sec]
+    niche_keywords:
+      - securities
+      - investor
+      - misrepresentation
+      - insider
+      - manipulation
+      - settlement
+    voice: nova
+    voice_speed: 1.0
+    script_prompt: script_sec
+    target_minutes: 8
+    music_bed: artmylife-powerful-dramatic-trailer-514242.mp3
+    intro_sting: null
+    accent_color: "#0a3d2a"
+    youtube:
+      category_id: "25"
+      tags: [sec enforcement, securities fraud, insider trading, finance crime]
+      privacy: public
+
+  - slug: beneath-the-waves
+    name: "Beneath the Waves"
+    enabled: false
+    videos_per_run: 1
+    make_shorts: true
+    sources: [ntsb_marine]
+    niche_keywords: [maritime, vessel, ship, sinking, USCG, capsize]
+    voice: ash
+    voice_speed: 0.95
+    script_prompt: script_aviation
+    target_minutes: 8
+    music_bed: artmylife-powerful-dramatic-trailer-514242.mp3
+    intro_sting: null
+    accent_color: "#0c1e3d"
+    youtube:
+      category_id: "27"
+      tags: [maritime accident, ship sinking, NTSB marine, vessel disaster]
+      privacy: public
+
+  - slug: redacted
+    name: "Redacted"
+    enabled: false
+    videos_per_run: 1
+    make_shorts: true
+    sources: [foia]
+    niche_keywords: [classified, declassified, FBI, CIA, redacted, surveillance]
+    voice: sage
+    voice_speed: 0.95
+    script_prompt: script_court
+    target_minutes: 9
+    music_bed: artmylife-powerful-dramatic-trailer-514242.mp3
+    intro_sting: null
+    accent_color: "#1a1a1a"
+    youtube:
+      category_id: "25"
+      tags: [foia, declassified, government documents, conspiracy, surveillance]
+      privacy: public

@@ -1,0 +1,57 @@
+# Defines every public-records source the pipeline ingests from.
+# Each ingester module in src/ingest/ reads its config from here.
+
+sources:
+
+  ntsb_aviation:
+    type: ntsb
+    mode: aviation
+    # NTSB CAROL system (free, no auth)
+    base_url: https://data.ntsb.gov/carol-main-public/api/Query/Main
+    lookback_days: 14            # how far back to pull on each run
+    max_per_run: 200
+
+  ntsb_marine:
+    type: ntsb
+    mode: marine
+    base_url: https://data.ntsb.gov/carol-main-public/api/Query/Main
+    lookback_days: 30
+    max_per_run: 100
+
+  faa:
+    type: faa
+    # FAA Accident & Incident Data (free)
+    base_url: https://www.asias.faa.gov/apex/f
+    lookback_days: 30
+    max_per_run: 100
+
+  sec:
+    type: sec
+    # SEC EDGAR full-text search (free, no auth, rate-limited via UA)
+    base_url: https://efts.sec.gov/LATEST/search-index
+    enforcement_url: https://www.sec.gov/cgi-bin/browse-edgar
+    user_agent: "Docket Research research@example.com"   # SEC requires a real UA
+    lookback_days: 7
+    max_per_run: 100
+
+  courtlistener:
+    type: courtlistener
+    # CourtListener REST API (free with token, optional)
+    base_url: https://www.courtlistener.com/api/rest/v4
+    feed_url: https://www.courtlistener.com/feed/court/all/
+    lookback_days: 7
+    max_per_run: 100
+    courts: [scotus, ca1, ca2, ca3, ca4, ca5, ca6, ca7, ca8, ca9, ca10, ca11, cadc, cafc]
+
+  doj:
+    type: doj_rss
+    # DOJ press release RSS (free, no auth)
+    feed_url: https://www.justice.gov/news/rss?type=press_release
+    lookback_days: 7
+    max_per_run: 100
+
+  foia:
+    type: rss
+    feed_url: https://www.foia.gov/api/explore.json
+    lookback_days: 14
+    max_per_run: 50
