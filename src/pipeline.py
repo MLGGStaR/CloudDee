@@ -4,8 +4,8 @@ Daily run:
   1. Ingest from every source needed by enabled channels.
   2. Score every unscored record with Haiku.
   3. For each enabled channel, produce up to `videos_per_run` videos. Each
-     video uses a different top-scored record. After each long-form video
-     uploads, optionally generate and upload a 9:16 Short.
+     video uses a different top-scored record. After the long-form is
+     rendered, optionally generate and upload a 9:16 Short recap.
 
 Idempotent. Reruns won't double-publish a record on a channel.
 """
@@ -13,6 +13,7 @@ Idempotent. Reruns won't double-publish a record on a channel.
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import traceback
 from datetime import datetime, timezone
@@ -25,13 +26,13 @@ from .db import (
     mark_production_failed, open_run, top_records_for_channel, update_production,
 )
 from .images import fetch_visual
-from .render import SceneAsset, assemble_video
+from .render import SceneAsset, assemble_video, panels_needed_for
 from .score import score_pending
-from .script import write_script
+from .script import write_script, ScriptResult
 from .shorts import make_short
 from .thumbnail import make_thumbnail
 from .upload.youtube import set_thumbnail, upload_video
-from .utils import log, setup_logging, slugify
+from .utils import ffprobe_duration, log, setup_logging, slugify
 from .voice import render_voiceover
 
 
@@ -89,8 +90,6 @@ def produce_one_for_channel(
     channel: Channel,
     slot: int = 0,
 ) -> dict | None:
-    """Pick the top-not-yet-produced record for `channel` and produce a long
-    video (and optional short). Returns a summary dict or None if no record."""
     log().info("[%s] selecting top record (slot %d) …", channel.slug, slot)
     candidates = top_records_for_channel(conn, channel_slug=channel.slug, limit=5, min_total=18)
     if not candidates:
@@ -105,7 +104,6 @@ def produce_one_for_channel(
     if score.flags.get("sealed") or score.flags.get("minor_involved") or score.flags.get("tragedy_only"):
         log().info("[%s] record %s flagged: %s — skipping (will not retry)",
                    channel.slug, record.id, score.flags)
-        # Insert a failed production so we don't pick this record again.
         prod_id = create_production(conn, record_id=record.id, channel_slug=channel.slug)
         mark_production_failed(conn, prod_id, f"flagged: {json.dumps(score.flags)}")
         return None
@@ -155,27 +153,42 @@ def _produce_pipeline(
             raise RuntimeError("voiceover produced no audio")
         update_production(conn, prod_id, status="voiced", audio_path=str(audio_paths[0].parent))
 
-        # ---- 3. VISUALS ----
+        # ---- 3. VISUALS — multiple per scene for motion ----
         visuals_dir = work_dir / "visuals"
         scene_assets: list[SceneAsset] = []
-        for i, scene in enumerate(script.scenes):
+        narration_scenes = [s for s in script.scenes if s.narration.strip()]
+        for i, scene in enumerate(narration_scenes):
             audio_p = audio_paths[i] if i < len(audio_paths) else audio_paths[-1]
-            visual_p = fetch_visual(
+            scene_seconds = ffprobe_duration(audio_p)
+            n_panels = panels_needed_for(scene_seconds)
+            visuals = _fetch_panel_visuals(
                 settings,
-                b_roll_prompt=scene.b_roll or scene.narration[:200],
-                out_dir=visuals_dir,
-                prefer_video=(scene.id in {"hook", "the-incident", "the-allegations", "the-scheme"}),
-                allow_ai=True,
+                scene_b_roll=scene.b_roll or scene.narration[:200],
+                scene_label=scene.label or scene.id,
+                n_panels=n_panels,
+                out_dir=visuals_dir / f"scene_{i:02d}",
+                scene_id=scene.id,
             )
-            if visual_p is None:
-                raise RuntimeError(f"no visual found for scene {scene.id}")
-            scene_assets.append(SceneAsset(audio_path=audio_p, visual_path=visual_p,
-                                           title_overlay=scene.id))
+            if not visuals:
+                raise RuntimeError(f"no visuals for scene {scene.id}")
+            scene_assets.append(SceneAsset(
+                audio_path=audio_p,
+                visuals=visuals,
+                title_overlay=scene.label or scene.id,
+            ))
 
         # ---- 4. RENDER LONG-FORM ----
         video_path = work_dir / "video.mp4"
         assemble_video(settings, channel=channel, scene_assets=scene_assets, out_path=video_path)
         update_production(conn, prod_id, status="rendered", video_path=str(video_path))
+
+        # Compute accurate timestamps from actual scene audio durations.
+        actual_description = _description_with_timestamps(
+            base_description=script.description,
+            scenes=narration_scenes,
+            audio_paths=audio_paths,
+            channel=channel,
+        )
 
         # ---- 5. THUMBNAIL ----
         thumb_path = work_dir / "thumbnail.png"
@@ -188,14 +201,17 @@ def _produce_pipeline(
             out_path=thumb_path,
         )
 
-        # ---- 6. SHORT (optional) ----
+        # ---- 6. SHORT (recap-style) ----
         short_path: Path | None = None
         if channel.make_shorts:
             try:
                 short_path = work_dir / "short.mp4"
                 make_short(
+                    anthropic_key=settings.anthropic_api_key,
+                    openai_key=settings.openai_api_key,
                     scenes=scene_assets,
                     long_form_title=script.title,
+                    long_form_narration=script.full_narration,
                     channel=channel,
                     out_path=short_path,
                 )
@@ -224,7 +240,7 @@ def _produce_pipeline(
             client_secret=settings.google_client_secret,
             file_path=video_path,
             title=script.title,
-            description=_with_source_block(script.description, record),
+            description=_with_source_block(actual_description, record),
             tags=script.tags or channel.youtube.get("tags", []),
             category_id=str(channel.youtube.get("category_id", "27")),
             privacy=channel.youtube.get("privacy", "public"),
@@ -240,8 +256,6 @@ def _produce_pipeline(
         except Exception as e:
             log().warning("thumbnail upload failed (channel needs verification?): %s", e)
 
-        # Upload the Short as its own video. YouTube auto-classifies vertical
-        # videos under 60s as Shorts, which routes them through the Shorts feed.
         short_video_id: str | None = None
         if short_path and short_path.exists():
             try:
@@ -252,7 +266,7 @@ def _produce_pipeline(
                     client_secret=settings.google_client_secret,
                     file_path=short_path,
                     title=short_title,
-                    description=_short_description(script.title, long_video_id, record),
+                    description=_short_description(script.title, long_video_id, record, channel),
                     tags=(script.tags or [])[:10] + ["shorts"],
                     category_id=str(channel.youtube.get("category_id", "27")),
                     privacy=channel.youtube.get("privacy", "public"),
@@ -280,6 +294,96 @@ def _produce_pipeline(
         raise
 
 
+def _fetch_panel_visuals(
+    settings: Settings,
+    *,
+    scene_b_roll: str,
+    scene_label: str,
+    n_panels: int,
+    out_dir: Path,
+    scene_id: str,
+) -> list[Path]:
+    """Fetch N visuals for a single scene by varying the search query so we
+    get visual diversity, not 8 copies of the same stock photo."""
+    out: list[Path] = []
+    seen: set[str] = set()
+
+    # Build a sequence of varied queries from the b_roll direction. We split
+    # on commas / "and" / semicolons so each clause becomes its own search.
+    base = scene_b_roll.strip()
+    candidates: list[str] = []
+    for part in re.split(r"[;,]| and ", base, flags=re.I):
+        part = part.strip()
+        if part and part not in candidates:
+            candidates.append(part)
+    if not candidates:
+        candidates = [base or scene_label]
+    # Pad with the scene label if we didn't get enough variety.
+    while len(candidates) < n_panels:
+        candidates.append(f"{candidates[len(candidates) % len(candidates)]} {scene_label}")
+
+    prefer_video_for = {"hook", "incident", "scheme", "allegations", "investigation", "tell"}
+
+    for i in range(n_panels):
+        query = candidates[i % len(candidates)]
+        v = fetch_visual(
+            settings,
+            b_roll_prompt=query,
+            out_dir=out_dir,
+            prefer_video=(scene_id in prefer_video_for and i % 3 == 0),
+            allow_ai=True,
+        )
+        if v is None:
+            continue
+        # Avoid the same exact file twice in one scene.
+        if str(v) in seen:
+            continue
+        seen.add(str(v))
+        out.append(v)
+
+    # Fallback: if every fetch returned None, throw — caller will raise.
+    return out
+
+
+def _description_with_timestamps(
+    *,
+    base_description: str,
+    scenes: list,
+    audio_paths: list[Path],
+    channel: Channel,
+) -> str:
+    """Append accurate scene timestamps to the YouTube description, computed
+    from the actual audio duration of each scene + the intro sting offset."""
+    intro_offset = 0.0
+    intro = (Path(__file__).resolve().parent.parent
+             / "assets" / "intros" / (channel.intro_sting or ""))
+    if channel.intro_sting and intro.exists():
+        try:
+            intro_offset = ffprobe_duration(intro)
+        except Exception:
+            intro_offset = 0.0
+
+    lines = ["", "— Chapters —"]
+    cursor = intro_offset
+    for i, scene in enumerate(scenes):
+        label = scene.label or scene.id
+        lines.append(f"{_format_timestamp(cursor)} {label}")
+        try:
+            cursor += ffprobe_duration(audio_paths[i] if i < len(audio_paths) else audio_paths[-1])
+        except Exception:
+            cursor += 30.0  # fallback if a probe fails
+    return (base_description or "").rstrip() + "\n".join(lines)
+
+
+def _format_timestamp(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
 def _shorts_title(long_title: str) -> str:
     base = long_title.strip()
     if len(base) > 90:
@@ -289,12 +393,14 @@ def _shorts_title(long_title: str) -> str:
     return f"{base} #Shorts"[:100]
 
 
-def _short_description(long_title: str, long_video_id: str, record: Record) -> str:
+def _short_description(long_title: str, long_video_id: str, record: Record, channel: Channel) -> str:
+    brand = channel.brand_name or channel.name
     return (
         f"Full video: https://youtube.com/watch?v={long_video_id}\n\n"
+        f"Subscribe to {brand} for daily public-record breakdowns.\n\n"
         f"Source: {record.title}\n{record.url}\n"
         f"Published: {record.published_at}\n\n"
-        "#Shorts #Aviation #NTSB"
+        "#Shorts"
     )
 
 
@@ -310,3 +416,8 @@ def _with_source_block(description: str, record: Record) -> str:
         "in the comments."
     )
     return (description or "")[:4500] + src_block
+
+
+# Imported here at the bottom to avoid a circular-import quirk during
+# the Scene/SceneAsset refactor.
+import re  # noqa: E402

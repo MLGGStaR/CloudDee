@@ -36,6 +36,7 @@ class Channel:
     youtube: dict[str, Any]
     videos_per_run: int = 1
     make_shorts: bool = False
+    brand_name: str = ""           # CTA-friendly brand (defaults to channel name if empty)
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,7 @@ def _load_channels() -> list[Channel]:
                 youtube=dict(c.get("youtube", {})),
                 videos_per_run=int(c.get("videos_per_run", 1)),
                 make_shorts=bool(c.get("make_shorts", False)),
+                brand_name=str(c.get("brand_name") or c.get("name") or "").strip(),
             )
         )
     return out

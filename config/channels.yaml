@@ -8,6 +8,7 @@ channels:
 
   - slug: final-approach
     name: "Final Approach"
+    brand_name: "CloudDee"                       # what the outro CTA says ("Subscribe to CloudDee")
     enabled: true
     videos_per_run: 3                            # produce N different stories per run
     make_shorts: true                            # also cut a 9:16 short for each video

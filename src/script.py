@@ -25,6 +25,7 @@ class Scene:
     id: str
     narration: str
     b_roll: str
+    label: str = ""        # human-readable label for description timestamps
 
 
 @dataclass
@@ -58,6 +59,7 @@ def write_script(api_key: str, channel: Channel, record: Record) -> ScriptResult
         text=truncate(record.raw_text, 30_000),
         target_minutes=channel.target_minutes,
         target_words=target_words,
+        brand_name=channel.brand_name or channel.name,
     )
 
     return _call(client, body)
@@ -93,6 +95,7 @@ def _call(client: Anthropic, body: str) -> ScriptResult:
             id=str(s.get("id") or f"scene_{i}"),
             narration=str(s.get("narration") or "").strip(),
             b_roll=str(s.get("b_roll") or "").strip(),
+            label=str(s.get("label") or s.get("id") or f"Section {i+1}").strip(),
         )
         for i, s in enumerate(data.get("scenes") or [])
     ]
