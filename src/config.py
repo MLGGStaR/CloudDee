@@ -104,24 +104,36 @@ def _load_sources() -> dict[str, Source]:
     return out
 
 
+def _env(name: str, default: str = "") -> str:
+    """Read an env var and strip surrounding whitespace.
+
+    GitHub Actions secrets often arrive with a trailing newline depending on
+    how they were pasted. That newline is fatal for any value used in an HTTP
+    header (every API key we use), so we always strip.
+    """
+    return (os.environ.get(name, default) or "").strip()
+
+
 def load_settings() -> Settings:
     s = Settings(
-        anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
-        openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
-        courtlistener_token=os.environ.get("COURTLISTENER_API_TOKEN", ""),
-        pexels_api_key=os.environ.get("PEXELS_API_KEY", ""),
-        google_client_id=os.environ.get("GOOGLE_CLIENT_ID", ""),
-        google_client_secret=os.environ.get("GOOGLE_CLIENT_SECRET", ""),
-        yt_refresh_tokens=json.loads(os.environ.get("YT_REFRESH_TOKENS_JSON", "{}") or "{}"),
-        db_path=Path(os.environ.get("DOCKET_DB_PATH", "docket.db")),
-        output_dir=Path(os.environ.get("DOCKET_OUTPUT_DIR", "output")),
-        dry_run=os.environ.get("DOCKET_DRY_RUN", "0") == "1",
-        max_videos_per_run=int(os.environ.get("DOCKET_MAX_VIDEOS_PER_RUN", "3")),
-        log_level=os.environ.get("DOCKET_LOG_LEVEL", "INFO"),
-        timezone=os.environ.get("DOCKET_TIMEZONE", "America/New_York"),
+        anthropic_api_key=_env("ANTHROPIC_API_KEY"),
+        openai_api_key=_env("OPENAI_API_KEY"),
+        courtlistener_token=_env("COURTLISTENER_API_TOKEN"),
+        pexels_api_key=_env("PEXELS_API_KEY"),
+        google_client_id=_env("GOOGLE_CLIENT_ID"),
+        google_client_secret=_env("GOOGLE_CLIENT_SECRET"),
+        yt_refresh_tokens=json.loads(_env("YT_REFRESH_TOKENS_JSON") or "{}"),
+        db_path=Path(_env("DOCKET_DB_PATH", "docket.db")),
+        output_dir=Path(_env("DOCKET_OUTPUT_DIR", "output")),
+        dry_run=_env("DOCKET_DRY_RUN", "0") == "1",
+        max_videos_per_run=int(_env("DOCKET_MAX_VIDEOS_PER_RUN", "3")),
+        log_level=_env("DOCKET_LOG_LEVEL", "INFO"),
+        timezone=_env("DOCKET_TIMEZONE", "America/New_York"),
         channels=_load_channels(),
         sources=_load_sources(),
     )
+    # Also strip the YT refresh tokens themselves — same paste-with-newline risk.
+    s.yt_refresh_tokens = {k: (v or "").strip() for k, v in s.yt_refresh_tokens.items()}
     s.output_dir.mkdir(parents=True, exist_ok=True)
     return s
 
