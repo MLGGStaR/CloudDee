@@ -38,7 +38,7 @@ env:
 jobs:
   produce:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -95,6 +95,35 @@ jobs:
         with:
           path: state
           key: docket-state-${{ github.run_id }}
+
+      # Commit the SQLite state DB + a daily heartbeat marker back to
+      # the repo. Two purposes:
+      #   1. Cache eviction insurance — if the GH Actions cache is
+      #      evicted during a quiet stretch, the dedup state is still
+      #      recoverable from the repo.
+      #   2. Keeps the default branch active. GitHub disables scheduled
+      #      workflows after 60 days of repo inactivity, and a daily
+      #      bot commit prevents that from firing — critical during
+      #      long unattended windows.
+      # Only runs on the scheduled cron, not on manual dry-runs, and
+      # never if there are no actual changes.
+      - name: Commit state heartbeat to repo
+        if: always() && github.event_name == 'schedule'
+        run: |
+          set -e
+          mkdir -p state
+          date -u +"%Y-%m-%dT%H:%M:%SZ run=${{ github.run_id }}" > state/last_run.txt
+          git config user.name "docket-bot"
+          git config user.email "docket-bot@users.noreply.github.com"
+          git add state/last_run.txt
+          [ -f state/docket.db ] && git add state/docket.db || true
+          if git diff --staged --quiet; then
+            echo "No state changes to commit"
+          else
+            git commit -m "state: daily heartbeat $(date -u +%Y-%m-%d)" -m "[skip ci]"
+            # Retry push once in case of transient network/race
+            git push || (sleep 5 && git pull --rebase && git push)
+          fi
 
       - name: Upload run artifacts
         if: always()

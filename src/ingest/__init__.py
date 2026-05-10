@@ -35,9 +35,23 @@ def run(settings: Settings, conn: sqlite3.Connection, source_slug: str) -> int:
 
 
 def run_all_for_channels(settings: Settings, conn: sqlite3.Connection) -> dict[str, int]:
-    """Run every source referenced by an enabled channel."""
+    """Run every source referenced by an enabled channel.
+
+    Each source is wrapped in its own try/except — a broken upstream
+    (e.g. NTSB API schema change, DOJ RSS down) must not kill the whole
+    pipeline. Failed sources return 0 ingested; other sources still run
+    and the rest of the pipeline (scoring, scripting, render, upload)
+    proceeds with whatever records did make it in.
+    """
     needed: set[str] = set()
     for ch in settings.channels:
         if ch.enabled:
             needed.update(ch.sources)
-    return {s: run(settings, conn, s) for s in sorted(needed)}
+    out: dict[str, int] = {}
+    for s in sorted(needed):
+        try:
+            out[s] = run(settings, conn, s)
+        except Exception as e:
+            log().exception("ingest source %s failed (continuing): %s", s, e)
+            out[s] = 0
+    return out
