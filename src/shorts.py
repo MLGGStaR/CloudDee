@@ -28,7 +28,7 @@ from .config import Channel, Settings, load_prompt
 from .db import Record
 from .images import fetch_visual
 from .render import SceneAsset
-from .transcribe import reflow_srt_max_words, transcribe_to_srt
+from .transcribe import parse_srt_blocks, reflow_srt_max_words, transcribe_to_srt
 from .utils import ffprobe_duration, log, render_template, require_ffmpeg, truncate
 
 
@@ -41,6 +41,10 @@ OUTRO_DURATION = 1.0          # one quick "Subscribe to <brand>" flash, no linge
 STANDALONE_PANEL_COUNT = 5    # ~11s per panel for a 55s short — still active
 BODY_MAX_DURATION = 58.0      # cap recap body audio so we don't truncate mid-word
 MAX_SHORT_DURATION = 59.5     # YouTube classifies <=60s vertical as a Short
+
+# Where the fonts-dejavu Ubuntu package installs DejaVu Sans Bold. Pinned
+# absolute path because drawtext requires fontfile=, not fontname=.
+CAPTION_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 
 # =============================================================================
@@ -178,18 +182,11 @@ def _build_short_video(
             log().info("  short whisper raw: %d chars, head=%r",
                        len(raw_srt or ""), (raw_srt or "")[:160])
             reflowed = reflow_srt_max_words(raw_srt, max_words=4)
-            # Fall back to the raw Whisper output if reflow ate everything
-            # (e.g. an SRT format quirk that the reflow parser couldn't
-            # handle). Better to show captions in original phrasing than
-            # to show none at all.
             srt_text = reflowed if reflowed.strip() else raw_srt
             if not srt_text.strip():
                 log().warning("  short: whisper returned empty SRT — captions will be missing")
         except Exception as e:
             log().warning("  short transcribe failed (no captions): %s", e)
-        srt_path = td_path / "recap.srt"
-        if srt_text:
-            srt_path.write_text(srt_text, encoding="utf-8")
 
         # Pick panels evenly spaced through the visual pool
         n_panels = max(4, int(round(recap_duration / PANEL_TARGET_SEC)))
@@ -203,7 +200,7 @@ def _build_short_video(
         _render_vertical_body(
             visuals=visual_pool,
             audio=recap_audio,
-            srt_path=srt_path if srt_text else None,
+            srt_text=srt_text,
             out_path=body_path,
         )
         log().info("  short body=%.1fs (audio=%.1fs)",
@@ -349,11 +346,55 @@ def _synthesize(api_key: str, *, text: str, voice: str, speed: float, out_path: 
 # Vertical body / outro / concat / loudness
 # =============================================================================
 
+def _build_caption_drawtext_chain(srt_text: str, td_path: Path) -> str | None:
+    """Convert an SRT into a chain of drawtext filters — one per caption
+    block, timed via `enable='between(t,start,end)'`. Each block's text is
+    written to its own .txt file so we sidestep all of drawtext's escape
+    rules (single quotes, colons, commas, percent signs).
+
+    Returns the filter chain string ending with [v], or None if there is
+    nothing to draw. Replaces the old `subtitles=` (libass) approach which
+    was silently rendering nothing for shorts.
+    """
+    if not srt_text or not srt_text.strip():
+        return None
+    blocks = parse_srt_blocks(srt_text)
+    if not blocks:
+        return None
+    if not Path(CAPTION_FONT_PATH).exists():
+        log().warning("  short captions: font %s not found, skipping",
+                      CAPTION_FONT_PATH)
+        return None
+
+    parts: list[str] = []
+    for i, b in enumerate(blocks):
+        in_label = "0:v" if i == 0 else f"vc{i - 1}"
+        out_label = "v" if i == len(blocks) - 1 else f"vc{i}"
+        txt_path = td_path / f"cap_{i:03d}.txt"
+        txt_path.write_text(b["text"], encoding="utf-8")
+        # Bottom-third placement, large bold caps with a thick black outline.
+        # x centered, y at 65% of frame height — clear of the YouTube Shorts
+        # bottom UI overlay (title, channel, like/comment, progress bar).
+        drawtext = (
+            f"drawtext="
+            f"fontfile={CAPTION_FONT_PATH}:"
+            f"textfile={txt_path}:"
+            f"fontsize=64:fontcolor=white:"
+            f"borderw=5:bordercolor=black:"
+            f"x=(w-text_w)/2:y=h*0.65:"
+            f"enable='between(t\\,{b['start']:.3f}\\,{b['end']:.3f})'"
+        )
+        parts.append(f"[{in_label}]{drawtext}[{out_label}]")
+    chain = ";".join(parts)
+    log().info("  short captions: %d drawtext segments", len(blocks))
+    return chain
+
+
 def _render_vertical_body(
     *,
     visuals: list[Path],
     audio: Path,
-    srt_path: Path | None,
+    srt_text: str,
     out_path: Path,
 ) -> None:
     duration = ffprobe_duration(audio)
@@ -371,35 +412,31 @@ def _render_vertical_body(
         joined = td_path / "joined.mp4"
         _concat(panels, out_path=joined)
 
-        if srt_path is not None and srt_path.exists():
-            srt_filter_path = str(srt_path).replace("\\", "/").replace(":", r"\:")
-            log().info("  short subtitles: %d bytes → burning", srt_path.stat().st_size)
-            # Mirror the (working) long-form filter exactly — only Fontsize and
-            # MarginV differ to suit vertical 1080x1920 framing. The earlier
-            # custom filter (Fontname=DejaVu Sans, no BackColour) wasn't
-            # rendering for some reason; this matches the recipe that's known
-            # to render in long-form scene videos.
-            v_filter = (
-                f"subtitles='{srt_filter_path}':"
-                "force_style='Fontsize=48,Outline=2,Shadow=1,BorderStyle=1,"
-                "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
-                "BackColour=&H80000000,Alignment=2,MarginV=600,Bold=1'"
-            )
+        caption_chain = _build_caption_drawtext_chain(srt_text, td_path)
+        if caption_chain:
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(joined),
+                "-i", str(audio),
+                "-filter_complex", caption_chain,
+                "-map", "[v]", "-map", "1:a",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                "-c:a", "aac", "-b:a", "192k",
+                "-t", f"{duration:.3f}",
+                str(out_path),
+            ]
         else:
-            log().warning("  short: no SRT → captions will be missing")
-            v_filter = "null"
-
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(joined),
-            "-i", str(audio),
-            "-filter_complex", f"[0:v]{v_filter}[v]",
-            "-map", "[v]", "-map", "1:a",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-            "-c:a", "aac", "-b:a", "192k",
-            "-t", f"{duration:.3f}",
-            str(out_path),
-        ]
+            log().warning("  short: no captions → plain body")
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(joined),
+                "-i", str(audio),
+                "-map", "0:v", "-map", "1:a",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                "-c:a", "aac", "-b:a", "192k",
+                "-t", f"{duration:.3f}",
+                str(out_path),
+            ]
         _run(cmd)
 
 

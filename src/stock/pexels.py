@@ -19,22 +19,48 @@ PHOTO_SEARCH = "https://api.pexels.com/v1/search"
 VIDEO_SEARCH = "https://api.pexels.com/videos/search"
 
 
+MIN_PHOTO_WIDTH = 1920    # don't accept anything smaller than HD video width
+MIN_PHOTO_HEIGHT = 1080   # ditto for height; rules out tall-but-narrow
+MIN_PHOTO_PIXELS = 1920 * 1080  # gates aggressively cropped landscape shots
+
+
 def fetch_photo(api_key: str, query: str, *, out_dir: Path, orientation: str = "landscape") -> Path | None:
-    """Search Pexels for `query`, download the top photo, return its path.
-    Returns None if no key or no result."""
+    """Search Pexels for `query`, download the highest-quality eligible photo.
+
+    Eligibility = at least 1920x1080 native resolution AND the `original`
+    URL must be usable. We were previously grabbing the `large2x` rendition
+    (~940px wide) and the top result regardless of size — that's why some
+    long-form panels looked low-quality. Now we skip results that don't
+    meet the bar and download the `original` for full resolution.
+    """
     if not api_key:
         return None
     out_dir.mkdir(parents=True, exist_ok=True)
     headers = {"Authorization": api_key}
-    params = {"query": query, "per_page": 5, "orientation": orientation}
+    # size=large filter rules out tiny stock photos at the API level.
+    params = {"query": query, "per_page": 15, "orientation": orientation, "size": "large"}
     try:
         r = _request("GET", PHOTO_SEARCH, headers=headers, params=params)
         photos = r.json().get("photos", [])
         if not photos:
             return None
-        # Pick the largest "landscape" rendition
-        photo = photos[0]
-        src = photo["src"].get("large2x") or photo["src"].get("large") or photo["src"].get("original")
+
+        # Pick the first photo whose native resolution clears the bar.
+        photo = None
+        for p in photos:
+            w = int(p.get("width") or 0)
+            h = int(p.get("height") or 0)
+            if w >= MIN_PHOTO_WIDTH and h >= MIN_PHOTO_HEIGHT and w * h >= MIN_PHOTO_PIXELS:
+                photo = p
+                break
+        if photo is None:
+            log().debug("Pexels: no photo >=%dx%d for %r (checked %d)",
+                        MIN_PHOTO_WIDTH, MIN_PHOTO_HEIGHT, query, len(photos))
+            return None
+
+        # Prefer the native original (full resolution). Fall back to large2x
+        # only if original is missing for some reason.
+        src = photo["src"].get("original") or photo["src"].get("large2x") or photo["src"].get("large")
         if not src:
             return None
         ext = Path(src.split("?")[0]).suffix or ".jpg"
@@ -46,6 +72,7 @@ def fetch_photo(api_key: str, query: str, *, out_dir: Path, orientation: str = "
                 with dest.open("wb") as fh:
                     for chunk in resp.iter_bytes():
                         fh.write(chunk)
+        log().info("  pexels photo %dx%d for %r", photo.get("width"), photo.get("height"), query[:40])
         return dest
     except Exception as e:
         log().debug("Pexels photo fetch failed for %r: %s", query, e)

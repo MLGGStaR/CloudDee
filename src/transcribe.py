@@ -147,6 +147,12 @@ def _seconds_to_ts(t: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
+def parse_srt_blocks(srt_text: str) -> list[dict]:
+    """Public: parse SRT text into a list of {start, end, text} dicts.
+    Used by callers that need to drive timed overlays without libass."""
+    return _parse_blocks(srt_text)
+
+
 def _parse_blocks(srt_text: str) -> list[dict]:
     out: list[dict] = []
     for chunk in re.split(r"\n\s*\n", srt_text.strip()):
