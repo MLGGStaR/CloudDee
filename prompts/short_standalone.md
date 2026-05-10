@@ -10,8 +10,8 @@ words) that:
   Compressed but coherent. Each sentence must add information.
 - **Ends with one sharp closing line** — the lesson, the verdict, the
   outcome. Resonant.
-- **Does NOT end with a CTA** — the editor appends a 3-second "subscribe to
-  {brand_name}" outro card after the audio ends.
+- **Does NOT end with a CTA** — the editor appends a 1-second "subscribe to
+  {brand_name}" flash card after the audio ends.
 - Cite the source by **domain only**: data.ntsb.gov, sec.gov, justice.gov,
   courtlistener.com. Never read full URLs.
 - No "in this video," "today on the channel," "let's break down."

@@ -36,26 +36,27 @@ channels:
     intro_sting: null
     accent_color: "#0c2d48"
     music_bed: artmylife-powerful-dramatic-trailer-514242.mp3
+    # Single dramatic track for every scene. The other library tracks
+    # (acoustic-spring, afro-pop, dance-playful, carnaval) are mood-wrong
+    # for fatalities/fraud/court content and were producing happy music
+    # under tragic narration. Until mood-appropriate tracks are added,
+    # everything points at the dramatic trailer.
     music_by_scene_id:
-      # Aviation
       hook: artmylife-powerful-dramatic-trailer-514242.mp3
-      setup: ikoliks_aj-acoustic-spring-mothers-day-music-320427.mp3
+      setup: artmylife-powerful-dramatic-trailer-514242.mp3
       incident: artmylife-powerful-dramatic-trailer-514242.mp3
-      investigation: kontraa-water-afro-pop-music-445661.mp3
-      takeaway: ikoliks_aj-acoustic-spring-mothers-day-music-320427.mp3
-      # Court / DOJ
-      parties: ikoliks_aj-acoustic-spring-mothers-day-music-320427.mp3
+      investigation: artmylife-powerful-dramatic-trailer-514242.mp3
+      takeaway: artmylife-powerful-dramatic-trailer-514242.mp3
+      parties: artmylife-powerful-dramatic-trailer-514242.mp3
       allegations: artmylife-powerful-dramatic-trailer-514242.mp3
-      evidence: kontraa-water-afro-pop-music-445661.mp3
-      status: kontraa-water-afro-pop-music-445661.mp3
-      context: ikoliks_aj-acoustic-spring-mothers-day-music-320427.mp3
-      # SEC
-      company: ikoliks_aj-acoustic-spring-mothers-day-music-320427.mp3
+      evidence: artmylife-powerful-dramatic-trailer-514242.mp3
+      status: artmylife-powerful-dramatic-trailer-514242.mp3
+      context: artmylife-powerful-dramatic-trailer-514242.mp3
+      company: artmylife-powerful-dramatic-trailer-514242.mp3
       scheme: artmylife-powerful-dramatic-trailer-514242.mp3
-      tell: kontraa-water-afro-pop-music-445661.mp3
-      penalty: ikoliks_aj-acoustic-spring-mothers-day-music-320427.mp3
-      # Common
-      outro: alec_koff-carnaval-484622.mp3
+      tell: artmylife-powerful-dramatic-trailer-514242.mp3
+      penalty: artmylife-powerful-dramatic-trailer-514242.mp3
+      outro: artmylife-powerful-dramatic-trailer-514242.mp3
     youtube:
       category_id: "27"
       tags: [public records, investigation, true crime, NTSB, SEC, DOJ, FOIA]

@@ -37,8 +37,9 @@ VERTICAL_H = 1920
 PANEL_TARGET_SEC = 8.0
 RECAP_MODEL = "claude-sonnet-4-6"
 TTS_MODEL = "tts-1-hd"
-OUTRO_DURATION = 3.0
+OUTRO_DURATION = 1.0          # one quick "Subscribe to <brand>" flash, no lingering
 STANDALONE_PANEL_COUNT = 5    # ~11s per panel for a 55s short — still active
+MAX_SHORT_DURATION = 58.5     # YouTube classifies <=60s vertical as a Short
 
 
 # =============================================================================
@@ -195,6 +196,8 @@ def _build_short_video(
             srt_path=srt_path if srt_text else None,
             out_path=body_path,
         )
+        log().info("  short body=%.1fs (audio=%.1fs)",
+                   ffprobe_duration(body_path), recap_duration)
 
         outro_path = td_path / "outro.mp4"
         _render_outro(
@@ -202,12 +205,16 @@ def _build_short_video(
             accent_color=channel.accent_color,
             out_path=outro_path,
         )
+        log().info("  short outro=%.1fs (target=%.1fs)",
+                   ffprobe_duration(outro_path), OUTRO_DURATION)
 
         concat_path = td_path / "concat.mp4"
         _concat([body_path, outro_path], out_path=concat_path)
+        log().info("  short concat=%.1fs", ffprobe_duration(concat_path))
         _finalize_loudness(concat_path, out_path=out_path)
 
-    log().info("  short → %s (%.1fs)", out_path, recap_duration + OUTRO_DURATION)
+    log().info("  short → %s (%.1fs final)",
+               out_path, ffprobe_duration(out_path))
     return out_path
 
 
@@ -356,13 +363,19 @@ def _render_vertical_body(
 
         if srt_path is not None and srt_path.exists():
             srt_filter_path = str(srt_path).replace("\\", "/").replace(":", r"\:")
+            log().info("  short subtitles: %d bytes → burning", srt_path.stat().st_size)
+            # Vertical Shorts: big bold caps in upper-mid third (clear of YouTube
+            # Shorts bottom UI: title, channel, like/comment buttons, progress bar).
+            # Pinned to DejaVu Sans because libass falls back silently when it
+            # can't find a font — that fallback was making captions invisible.
             v_filter = (
                 f"subtitles='{srt_filter_path}':"
-                "force_style='Fontsize=20,Outline=3,Shadow=0,BorderStyle=1,"
-                "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
-                "Alignment=2,MarginV=380,Bold=1'"
+                "force_style='Fontname=DejaVu Sans,Fontsize=56,Outline=4,Shadow=0,"
+                "BorderStyle=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+                "Alignment=2,MarginV=700,Bold=1'"
             )
         else:
+            log().warning("  short: no SRT → captions will be missing")
             v_filter = "null"
 
         cmd = [
@@ -473,6 +486,18 @@ def _concat(parts: list[Path], *, out_path: Path) -> None:
 
 
 def _finalize_loudness(video_in: Path, *, out_path: Path) -> None:
+    """Master loudness AND hard-cap to MAX_SHORT_DURATION.
+
+    The cap is deliberate: YouTube classifies <=60s vertical as a Short.
+    Earlier runs were producing 90+s files because something downstream
+    (concat / loudnorm / lavfi outro) was extending duration. The -t cap
+    is the failsafe — even if a panel/outro duration drifts, the final
+    file is bounded.
+    """
+    in_dur = ffprobe_duration(video_in)
+    target = min(in_dur, MAX_SHORT_DURATION)
+    log().info("  short finalize: input=%.1fs → output=%.1fs (cap=%.1f)",
+               in_dur, target, MAX_SHORT_DURATION)
     cmd = [
         "ffmpeg", "-y",
         "-i", str(video_in),
@@ -480,7 +505,8 @@ def _finalize_loudness(video_in: Path, *, out_path: Path) -> None:
         "[0:a]acompressor=threshold=-18dB:ratio=2.5:attack=10:release=200,"
         "loudnorm=I=-16:TP=-1.5:LRA=11[a]",
         "-map", "0:v", "-map", "[a]",
-        "-c:v", "copy",
+        "-t", f"{target:.3f}",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
         "-c:a", "aac", "-b:a", "192k",
         str(out_path),
     ]
