@@ -8,6 +8,7 @@ Daily run, per enabled channel:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import traceback
@@ -39,6 +40,18 @@ from .utils import ffprobe_duration, log, setup_logging, slugify
 from .voice import VoicedScene, render_voiceover
 
 
+def _override_int(env_name: str) -> int | None:
+    """Read an integer override from an env var. Treats empty/missing/0 as None."""
+    raw = os.environ.get(env_name, "").strip()
+    if not raw:
+        return None
+    try:
+        v = int(raw)
+    except ValueError:
+        return None
+    return v if v >= 0 else None
+
+
 def run_daily() -> None:
     settings = load_settings()
     setup_logging(settings.log_level)
@@ -60,9 +73,20 @@ def run_daily() -> None:
                     continue
 
                 # ---- Long-form loop (each spawns a paired Short) ----
+                # Allow per-run overrides via env vars (workflow_dispatch inputs)
+                # so we can do small test runs (e.g. 1 long + 1 short) without
+                # editing the channel config.
+                override_longs = _override_int("DOCKET_OVERRIDE_LONGS")
+                override_shorts = _override_int("DOCKET_OVERRIDE_SHORTS")
+                n_longs = override_longs if override_longs is not None else channel.videos_per_run
+                n_shorts = override_shorts if override_shorts is not None else channel.shorts_per_run
+                if override_longs is not None or override_shorts is not None:
+                    log().info("[%s] override: longs=%d shorts=%d",
+                               channel.slug, n_longs, n_shorts)
+
                 produced = 0
                 quota_exhausted = False
-                for n in range(channel.videos_per_run):
+                for n in range(n_longs):
                     try:
                         result = produce_one_for_channel(settings, conn, channel, slot=n)
                         if result is None:
@@ -83,14 +107,14 @@ def run_daily() -> None:
                         summary["errors"].append({"channel": channel.slug, "slot": n, "error": str(e)})
 
                 # ---- Extra standalone Shorts ----
-                extra_shorts = max(0, channel.shorts_per_run - produced)
+                extra_shorts = max(0, n_shorts - produced)
                 if quota_exhausted:
                     log().warning("[%s] skipping %d standalone Shorts — quota exhausted",
                                   channel.slug, extra_shorts)
                     extra_shorts = 0
-                elif channel.shorts_per_run and channel.make_shorts:
+                elif n_shorts and channel.make_shorts:
                     log().info("[%s] producing %d standalone Shorts (target=%d, longs=%d)",
-                               channel.slug, extra_shorts, channel.shorts_per_run, produced)
+                               channel.slug, extra_shorts, n_shorts, produced)
                 for n in range(extra_shorts):
                     try:
                         result = produce_standalone_short_for_channel(

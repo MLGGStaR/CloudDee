@@ -13,6 +13,14 @@ on:
         description: "Skip YouTube upload"
         required: false
         default: "false"
+      longs:
+        description: "Override long-form count (blank = use channel config)"
+        required: false
+        default: ""
+      shorts:
+        description: "Override total shorts count (blank = use channel config)"
+        required: false
+        default: ""
 
 permissions:
   contents: write   # so we can commit the updated SQLite DB back to the repo
@@ -45,6 +53,8 @@ jobs:
       DOCKET_LOG_LEVEL: INFO
       DOCKET_MAX_VIDEOS_PER_RUN: 3
       DOCKET_DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
+      DOCKET_OVERRIDE_LONGS: ${{ github.event.inputs.longs }}
+      DOCKET_OVERRIDE_SHORTS: ${{ github.event.inputs.shorts }}
 
     steps:
       - name: Check out repo
