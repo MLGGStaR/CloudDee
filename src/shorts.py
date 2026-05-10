@@ -39,7 +39,8 @@ RECAP_MODEL = "claude-sonnet-4-6"
 TTS_MODEL = "tts-1-hd"
 OUTRO_DURATION = 1.0          # one quick "Subscribe to <brand>" flash, no lingering
 STANDALONE_PANEL_COUNT = 5    # ~11s per panel for a 55s short — still active
-MAX_SHORT_DURATION = 58.5     # YouTube classifies <=60s vertical as a Short
+BODY_MAX_DURATION = 58.0      # cap recap body audio so we don't truncate mid-word
+MAX_SHORT_DURATION = 59.5     # YouTube classifies <=60s vertical as a Short
 
 
 # =============================================================================
@@ -364,15 +365,16 @@ def _render_vertical_body(
         if srt_path is not None and srt_path.exists():
             srt_filter_path = str(srt_path).replace("\\", "/").replace(":", r"\:")
             log().info("  short subtitles: %d bytes → burning", srt_path.stat().st_size)
-            # Vertical Shorts: big bold caps in upper-mid third (clear of YouTube
-            # Shorts bottom UI: title, channel, like/comment buttons, progress bar).
-            # Pinned to DejaVu Sans because libass falls back silently when it
-            # can't find a font — that fallback was making captions invisible.
+            # Mirror the (working) long-form filter exactly — only Fontsize and
+            # MarginV differ to suit vertical 1080x1920 framing. The earlier
+            # custom filter (Fontname=DejaVu Sans, no BackColour) wasn't
+            # rendering for some reason; this matches the recipe that's known
+            # to render in long-form scene videos.
             v_filter = (
                 f"subtitles='{srt_filter_path}':"
-                "force_style='Fontname=DejaVu Sans,Fontsize=56,Outline=4,Shadow=0,"
-                "BorderStyle=1,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
-                "Alignment=2,MarginV=700,Bold=1'"
+                "force_style='Fontsize=48,Outline=2,Shadow=1,BorderStyle=1,"
+                "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,"
+                "BackColour=&H80000000,Alignment=2,MarginV=600,Bold=1'"
             )
         else:
             log().warning("  short: no SRT → captions will be missing")
