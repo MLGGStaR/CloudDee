@@ -528,31 +528,137 @@ def _ffmpeg_escape(text: str) -> str:
 
 
 def _render_outro(*, brand: str, accent_color: str, out_path: Path) -> None:
-    accent = (accent_color or "#0c2d48").lstrip("#") or "0c2d48"
-    line1 = _ffmpeg_escape("SUBSCRIBE TO")
-    line2 = _ffmpeg_escape(brand.upper())
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "lavfi", "-i",
-        f"color=c=#{accent}:s={VERTICAL_W}x{VERTICAL_H}:d={OUTRO_DURATION}:r=30",
-        "-f", "lavfi", "-i",
-        f"anullsrc=channel_layout=stereo:sample_rate=44100",
-        "-filter_complex",
-        (
-            f"[0:v]drawtext=text='{line1}':fontsize=80:fontcolor=white:"
-            f"borderw=4:bordercolor=black:x=(w-text_w)/2:y=h*0.40[a];"
-            f"[a]drawtext=text='{line2}':fontsize=130:fontcolor=#f5d067:"
-            f"borderw=6:bordercolor=black:x=(w-text_w)/2:y=h*0.50[v]"
-        ),
-        "-map", "[v]",
-        "-map", "1:a",
-        "-shortest",
-        "-t", f"{OUTRO_DURATION}",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-        "-c:a", "aac", "-b:a", "128k",
-        str(out_path),
-    ]
-    _run(cmd)
+    """Render a polished 1-second outro: PIL paints a single frame with a
+    gradient background, kerned brand wordmark, and a red YouTube-style
+    rounded SUBSCRIBE pill — then ffmpeg displays it with a subtle
+    scale-in animation. Previously this was raw ffmpeg drawtext on a
+    flat color block, which looked low-effort and AI-default."""
+    with tempfile.TemporaryDirectory(prefix="docket_outro_") as td:
+        td_path = Path(td)
+        frame_path = td_path / "outro_frame.png"
+        _paint_outro_frame(brand=brand, accent_color=accent_color, out_path=frame_path)
+
+        # Animate: subtle scale-up from 1.0 to 1.06 over the duration —
+        # gives the still frame a touch of life without screaming "animated".
+        frames = max(int(OUTRO_DURATION * 30), 12)
+        zoom_expr = f"1+0.06*on/{frames}"
+        cmd = [
+            "ffmpeg", "-y",
+            "-loop", "1", "-i", str(frame_path),
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "-filter_complex",
+            (
+                f"[0:v]scale={int(VERTICAL_W*1.1)}:-1:flags=lanczos,"
+                f"zoompan=z='{zoom_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+                f":d={frames}:s={VERTICAL_W}x{VERTICAL_H}:fps=30,"
+                f"format=yuv420p,setsar=1[v]"
+            ),
+            "-map", "[v]", "-map", "1:a",
+            "-shortest",
+            "-t", f"{OUTRO_DURATION}",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+            "-c:a", "aac", "-b:a", "128k",
+            str(out_path),
+        ]
+        _run(cmd)
+
+
+def _paint_outro_frame(*, brand: str, accent_color: str, out_path: Path) -> None:
+    """PIL-paint a 1080x1920 outro frame. Layers:
+      1. Vertical gradient background (dark → accent → dark)
+      2. "SUBSCRIBE TO" small caps in white
+      3. Brand name in big bold gold caps
+      4. Red rounded SUBSCRIBE pill (YouTube-style)
+    """
+    from PIL import Image, ImageDraw, ImageFont
+    from .thumbnail import _load_font
+
+    accent_hex = (accent_color or "#0c2d48").lstrip("#") or "0c2d48"
+    accent_rgb = tuple(int(accent_hex[i:i + 2], 16) for i in (0, 2, 4))
+
+    img = Image.new("RGB", (VERTICAL_W, VERTICAL_H), (10, 10, 18))
+    draw = ImageDraw.Draw(img)
+
+    # 1. Vertical gradient: deep-dark at top/bottom, accent in the middle.
+    # Cheap blend by drawing horizontal lines top-to-bottom.
+    mid_y = VERTICAL_H / 2
+    edge_rgb = (12, 12, 22)
+    for y in range(VERTICAL_H):
+        # Distance from middle, normalized 0..1
+        t = abs(y - mid_y) / mid_y
+        # Ease: stays accent-heavy near middle, darker at edges.
+        t = t ** 1.4
+        r = int(accent_rgb[0] * (1 - t) + edge_rgb[0] * t)
+        g = int(accent_rgb[1] * (1 - t) + edge_rgb[1] * t)
+        b = int(accent_rgb[2] * (1 - t) + edge_rgb[2] * t)
+        draw.line([(0, y), (VERTICAL_W, y)], fill=(r, g, b))
+
+    # 2. "SUBSCRIBE TO" line
+    f_small = _load_font(96)
+    line1 = "SUBSCRIBE TO"
+    bbox = draw.textbbox((0, 0), line1, font=f_small)
+    w1 = bbox[2] - bbox[0]
+    x1 = (VERTICAL_W - w1) // 2
+    y1 = int(VERTICAL_H * 0.30)
+    draw.text((x1 + 3, y1 + 3), line1, font=f_small, fill=(0, 0, 0))           # shadow
+    draw.text((x1, y1), line1, font=f_small, fill=(255, 255, 255))
+
+    # 3. Brand wordmark — big bold gold caps, scaled to fit width
+    line2 = brand.upper()
+    f_brand = _fit_font_to_width(draw, line2, max_width=int(VERTICAL_W * 0.86), start_size=320)
+    bbox = draw.textbbox((0, 0), line2, font=f_brand)
+    w2 = bbox[2] - bbox[0]
+    h2 = bbox[3] - bbox[1]
+    x2 = (VERTICAL_W - w2) // 2
+    y2 = int(VERTICAL_H * 0.36)
+    # Drop shadow for depth
+    draw.text((x2 + 5, y2 + 5), line2, font=f_brand, fill=(0, 0, 0))
+    draw.text((x2, y2), line2, font=f_brand, fill=(245, 208, 103))             # gold
+
+    # 4. Red SUBSCRIBE pill — YouTube-style rounded rectangle
+    pill_text = "SUBSCRIBE"
+    f_pill = _load_font(112)
+    bbox = draw.textbbox((0, 0), pill_text, font=f_pill)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    pad_x, pad_y = 80, 50
+    pill_w = text_w + pad_x * 2
+    pill_h = text_h + pad_y * 2
+    pill_x = (VERTICAL_W - pill_w) // 2
+    pill_y = int(VERTICAL_H * 0.62)
+    radius = pill_h // 2  # full half-circle ends = pill shape
+    # Soft drop shadow under pill
+    shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    sd.rounded_rectangle(
+        [pill_x + 6, pill_y + 10, pill_x + pill_w + 6, pill_y + pill_h + 10],
+        radius=radius, fill=(0, 0, 0, 160),
+    )
+    img.paste(shadow, (0, 0), shadow)
+    # The pill itself
+    draw.rounded_rectangle(
+        [pill_x, pill_y, pill_x + pill_w, pill_y + pill_h],
+        radius=radius, fill=(204, 0, 0),
+    )
+    # White pill text
+    tx = pill_x + (pill_w - text_w) // 2
+    ty = pill_y + (pill_h - text_h) // 2 - 8
+    draw.text((tx, ty), pill_text, font=f_pill, fill=(255, 255, 255))
+
+    img.save(out_path, "PNG")
+
+
+def _fit_font_to_width(draw, text: str, *, max_width: int, start_size: int):
+    """Binary-search down font size until text fits within max_width."""
+    from .thumbnail import _load_font
+    size = start_size
+    while size > 20:
+        font = _load_font(size)
+        bbox = draw.textbbox((0, 0), text, font=font)
+        if bbox[2] - bbox[0] <= max_width:
+            return font
+        size = int(size * 0.92)
+    return _load_font(20)
 
 
 def _concat(parts: list[Path], *, out_path: Path) -> None:
