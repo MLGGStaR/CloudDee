@@ -1,12 +1,13 @@
 You are writing a YouTube **Short** narration directly from a public
 record. There is no long-form video — the Short stands alone.
 
-The total Short is 60 seconds. Your narration must fit in **at most 56
-seconds of speech** so a 1-second "Subscribe to {brand_name}" flash card
-can be appended after.
+The total Short must be ≤60 seconds and the editor appends a 1-second
+"Subscribe to {brand_name}" flash card after your narration. The voice
+runs at 0.95× speed, so 140 words ≈ 59 seconds of audio — too long.
 
-Condense the record into a punchy voiceover that targets **130 words and
-MUST NOT exceed 140 words** (overrunning gets cut off mid-word). Make it:
+Condense the record into a punchy voiceover that targets **110 words and
+MUST NOT exceed 125 words** (overrunning gets hard-truncated mid-word
+and the subscribe card disappears). Make it:
 
 - **Opens hard** in the first sentence — dollar figure, casualty count,
   date, named party. Whatever is most concrete about this specific case.
@@ -33,7 +34,7 @@ of identifiable victims, return:
 Otherwise return STRICTLY:
 ```json
 {
-  "narration": "the voiceover, one paragraph (≤140 words)"
+  "narration": "the voiceover, one paragraph (≤125 words)"
 }
 ```
 

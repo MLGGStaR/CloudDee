@@ -164,6 +164,10 @@ def _build_short_video(
     """Voice the narration, transcribe for captions, render the vertical
     timeline + outro, master loudness."""
     brand = channel.brand_name or channel.name
+    # Last-resort word cap. The prompt asks for ≤125 words but if the
+    # model overruns, hard-truncate at a sentence boundary so the audio
+    # stays inside the budget and the outro flash card still plays.
+    narration = _enforce_word_cap(narration, max_words=130)
     with tempfile.TemporaryDirectory(prefix="docket_short_") as td:
         td_path = Path(td)
         recap_audio = td_path / "recap.wav"
@@ -175,6 +179,8 @@ def _build_short_video(
             out_path=recap_audio,
         )
         recap_duration = ffprobe_duration(recap_audio)
+        log().info("  short narration: %d words → %.1fs audio (budget %.1fs)",
+                   len(narration.split()), recap_duration, BODY_MAX_DURATION)
 
         srt_text = ""
         try:
@@ -346,6 +352,22 @@ def _synthesize(api_key: str, *, text: str, voice: str, speed: float, out_path: 
 # Vertical body / outro / concat / loudness
 # =============================================================================
 
+def _enforce_word_cap(text: str, *, max_words: int) -> str:
+    """If `text` exceeds `max_words`, cut at the last sentence boundary
+    inside the cap. Ensures the audio fits the shorts budget even when
+    the LLM ignores the prompt's word limit."""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    truncated = " ".join(words[:max_words])
+    # Prefer ending on a sentence terminator.
+    for stop in (".", "!", "?"):
+        idx = truncated.rfind(stop)
+        if idx >= len(truncated) * 0.6:    # only honor if reasonably close to the end
+            return truncated[: idx + 1]
+    return truncated + "."
+
+
 def _build_caption_drawtext_chain(srt_text: str, td_path: Path) -> str | None:
     """Convert an SRT into a chain of drawtext filters — one per caption
     block, timed via `enable='between(t,start,end)'`. Each block's text is
@@ -397,7 +419,16 @@ def _render_vertical_body(
     srt_text: str,
     out_path: Path,
 ) -> None:
-    duration = ffprobe_duration(audio)
+    audio_duration = ffprobe_duration(audio)
+    # Cap body to BODY_MAX_DURATION. This is the last line of defense
+    # against TTS overrun: even if the narration runs 65s, the body is
+    # clipped at 58s and the 1s outro is guaranteed to play before the
+    # MAX_SHORT_DURATION ceiling. The prompt + _enforce_word_cap upstream
+    # should keep this from firing in practice.
+    duration = min(audio_duration, BODY_MAX_DURATION)
+    if audio_duration > BODY_MAX_DURATION:
+        log().warning("  short body: audio %.1fs > %.1fs cap — clipping",
+                      audio_duration, BODY_MAX_DURATION)
     n = len(visuals)
     panel_duration = duration / n
 

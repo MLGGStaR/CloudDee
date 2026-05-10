@@ -79,26 +79,54 @@ def fetch_photo(api_key: str, query: str, *, out_dir: Path, orientation: str = "
         return None
 
 
+MIN_VIDEO_WIDTH = 1920
+MIN_VIDEO_HEIGHT = 1080
+
+
 def fetch_video(api_key: str, query: str, *, out_dir: Path) -> Path | None:
-    """Search Pexels videos for `query`, download a short clip, return path."""
+    """Search Pexels videos for `query`, download a high-quality clip.
+
+    Previously: picked any clip <=1920px wide with no minimum bar — so a
+    640x360 SD result would pass and look terrible upscaled to 1080p.
+    Now: requires the video AND the chosen file to be at least 1920x1080,
+    and picks the closest-to-1080p file (preferring 1920x1080 over 4K to
+    keep download time + storage reasonable).
+    """
     if not api_key:
         return None
     out_dir.mkdir(parents=True, exist_ok=True)
     headers = {"Authorization": api_key}
-    params = {"query": query, "per_page": 5, "orientation": "landscape", "size": "medium"}
+    # size=medium = "at least Full HD" per Pexels' docs — that's our floor.
+    params = {"query": query, "per_page": 15, "orientation": "landscape", "size": "medium"}
     try:
         r = _request("GET", VIDEO_SEARCH, headers=headers, params=params)
         videos = r.json().get("videos", [])
         if not videos:
             return None
-        v = videos[0]
-        # Pick a 1080p or smaller mp4 file
-        files = sorted(v.get("video_files", []), key=lambda f: f.get("width", 0))
-        chosen = next((f for f in files if f.get("width", 0) <= 1920 and f.get("file_type") == "video/mp4"), None)
-        if chosen is None and files:
-            chosen = files[-1]
-        if chosen is None:
+
+        # Pick the first video whose NATIVE resolution clears the bar.
+        v = None
+        for cand in videos:
+            if int(cand.get("width") or 0) >= MIN_VIDEO_WIDTH and \
+               int(cand.get("height") or 0) >= MIN_VIDEO_HEIGHT:
+                v = cand
+                break
+        if v is None:
+            log().debug("Pexels: no video >=%dx%d for %r (checked %d)",
+                        MIN_VIDEO_WIDTH, MIN_VIDEO_HEIGHT, query, len(videos))
             return None
+
+        # Among that video's renditions, pick mp4 closest to 1920x1080 from
+        # at or above HD. Sorted by closeness-to-1920 width.
+        mp4s = [f for f in v.get("video_files", [])
+                if f.get("file_type") == "video/mp4"
+                and int(f.get("width") or 0) >= MIN_VIDEO_WIDTH
+                and int(f.get("height") or 0) >= MIN_VIDEO_HEIGHT]
+        if not mp4s:
+            log().debug("Pexels: video %s has no HD+ mp4 rendition", v.get("id"))
+            return None
+        chosen = min(mp4s, key=lambda f: abs(int(f.get("width") or 0) - 1920))
+
         slug = hashlib.sha1(query.encode("utf-8")).hexdigest()[:10]
         dest = out_dir / f"pexels_{slug}.mp4"
         if not dest.exists():
@@ -107,6 +135,8 @@ def fetch_video(api_key: str, query: str, *, out_dir: Path) -> Path | None:
                 with dest.open("wb") as fh:
                     for chunk in resp.iter_bytes():
                         fh.write(chunk)
+        log().info("  pexels video %dx%d for %r",
+                   chosen.get("width"), chosen.get("height"), query[:40])
         return dest
     except Exception as e:
         log().debug("Pexels video fetch failed for %r: %s", query, e)

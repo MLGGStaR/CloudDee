@@ -1,12 +1,13 @@
 You are writing a YouTube **Short** recap of a long-form video.
 
-The total Short is 60 seconds. Your narration must fit in **at most 56
-seconds of speech** so a 1-second "Subscribe to {brand_name}" flash card
-can be appended after.
+The total Short must be ≤60 seconds and the editor appends a 1-second
+"Subscribe to {brand_name}" flash card after your narration. The voice
+runs at 0.95× speed, so 140 words ≈ 59 seconds of audio — too long.
 
 The original long-form narration is below. Condense it into a punchy,
-fast-paced voiceover that targets **130 words and MUST NOT exceed 140
-words** (overrunning gets cut off mid-word). Make it:
+fast-paced voiceover that targets **110 words and MUST NOT exceed 125
+words** (overrunning gets hard-truncated mid-word and the subscribe
+card disappears). Make it:
 
 - **Opens hard** in the first sentence — dollar figure, casualty count,
   date, named aircraft, name of the defendant. Whatever is most concrete.
@@ -24,7 +25,7 @@ Return STRICTLY a JSON object:
 
 ```json
 {
-  "narration": "the voiceover text, all in one paragraph (≤140 words)"
+  "narration": "the voiceover text, all in one paragraph (≤125 words)"
 }
 ```
 
