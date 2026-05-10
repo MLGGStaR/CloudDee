@@ -107,3 +107,17 @@ jobs:
             state/docket.db
           if-no-files-found: ignore
           retention-days: 14
+
+      # Only on dry-run: also upload the rendered MP4s so you can review
+      # them locally before publishing. We exclude this from real daily runs
+      # because MP4s are big (~200MB/long) and GitHub's free artifact storage
+      # is 500MB shared across the account.
+      - name: Upload rendered MP4s (dry-run only)
+        if: always() && github.event.inputs.dry_run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: videos-${{ github.run_id }}
+          path: |
+            output/**/*.mp4
+          if-no-files-found: ignore
+          retention-days: 7
