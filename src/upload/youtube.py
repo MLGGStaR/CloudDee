@@ -80,6 +80,12 @@ def upload_video(
         client_id=client_id,
         client_secret=client_secret,
     )
+    base_status = {
+        "privacyStatus": "private" if publish_at else privacy,
+        "selfDeclaredMadeForKids": made_for_kids,
+        "madeForKids": made_for_kids,
+        "embeddable": True,
+    }
     body = {
         "snippet": {
             "title": title[:100],
@@ -87,35 +93,41 @@ def upload_video(
             "tags": tags[:30],
             "categoryId": category_id,
         },
-        "status": {
-            "privacyStatus": "private" if publish_at else privacy,
-            "selfDeclaredMadeForKids": made_for_kids,
-            "madeForKids": made_for_kids,
-            "embeddable": True,
-            # YouTube "altered or synthetic content" disclosure flag, added
-            # to the API in 2024. We disclose because (a) narration is AI
-            # TTS and (b) some panels are gpt-image-1 outputs. Hiding this
-            # from YouTube's own detection is the worst case for YPP
-            # eligibility; declaring it upfront is the right move.
-            "containsSyntheticMedia": True,
-        },
+        # Try the upload with the "altered or synthetic content" disclosure
+        # flag added. If YouTube's API rejects the field (it's been added
+        # to Studio but API support is still rolling out), we retry without
+        # it — the description footer carries the same disclosure.
+        "status": {**base_status, "containsSyntheticMedia": True},
     }
     if publish_at:
         body["status"]["publishAt"] = publish_at  # ISO 8601 UTC
 
-    media = MediaFileUpload(str(file_path), chunksize=-1, resumable=True, mimetype="video/mp4")
+    def _start_request(req_body):
+        media = MediaFileUpload(str(file_path), chunksize=-1, resumable=True, mimetype="video/mp4")
+        return yt.videos().insert(part="snippet,status", body=req_body, media_body=media)
 
-    request = yt.videos().insert(part="snippet,status", body=body, media_body=media)
-    response = None
-    while response is None:
-        try:
-            status, response = request.next_chunk()
-            if status:
-                log().info("  upload progress %d%%", int(status.progress() * 100))
-        except HttpError as e:
-            if _is_quota_exceeded(e):
-                log().error("  YouTube daily quota exceeded — aborting further uploads this run")
-                raise YouTubeQuotaExceeded(str(e)) from e
+    def _stream(req):
+        response = None
+        while response is None:
+            status_, response = req.next_chunk()
+            if status_:
+                log().info("  upload progress %d%%", int(status_.progress() * 100))
+        return response
+
+    try:
+        response = _stream(_start_request(body))
+    except HttpError as e:
+        if _is_quota_exceeded(e):
+            log().error("  YouTube daily quota exceeded — aborting further uploads this run")
+            raise YouTubeQuotaExceeded(str(e)) from e
+        # Retry without the synthetic-media flag if the API doesn't accept it.
+        msg = (e.content or b"").decode("utf-8", errors="ignore").lower()
+        if "containssyntheticmedia" in msg or "invalid value" in msg or e.resp.status == 400:
+            log().warning("  upload rejected with synthetic-media flag — retrying without "
+                          "(description footer still discloses AI use)")
+            body["status"] = base_status
+            response = _stream(_start_request(body))
+        else:
             log().error("  upload error: %s", e)
             raise
     video_id = response["id"]
