@@ -564,14 +564,23 @@ def _render_outro(*, brand: str, accent_color: str, out_path: Path) -> None:
 
 
 def _paint_outro_frame(*, brand: str, accent_color: str, out_path: Path) -> None:
-    """PIL-paint a 1080x1920 outro frame. Layers:
-      1. Vertical gradient background (dark → accent → dark)
-      2. "SUBSCRIBE TO" small caps in white
-      3. Brand name in big bold gold caps
-      4. Red rounded SUBSCRIBE pill (YouTube-style)
+    """PIL-paint a 1080x1920 outro frame with a documentary "case file"
+    aesthetic. Layers:
+      1. Vertical accent→dark gradient background
+      2. Gold frame bars top + bottom
+      3. Decorative line/diamond ornament flanking "SUBSCRIBE TO"
+      4. Brand wordmark in big bold gold + drop shadow
+      5. Gold underline + tagline below the brand
+      6. Bell icon (gold) + red rounded SUBSCRIBE pill with drop shadow
+      7. Subtle corner accent marks
     """
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
     from .thumbnail import _load_font
+
+    GOLD = (245, 208, 103)
+    WHITE = (255, 255, 255)
+    SHADOW = (0, 0, 0)
+    RED = (204, 0, 0)
 
     accent_hex = (accent_color or "#0c2d48").lstrip("#") or "0c2d48"
     accent_rgb = tuple(int(accent_hex[i:i + 2], 16) for i in (0, 2, 4))
@@ -579,73 +588,171 @@ def _paint_outro_frame(*, brand: str, accent_color: str, out_path: Path) -> None
     img = Image.new("RGB", (VERTICAL_W, VERTICAL_H), (10, 10, 18))
     draw = ImageDraw.Draw(img)
 
-    # 1. Vertical gradient: deep-dark at top/bottom, accent in the middle.
-    # Cheap blend by drawing horizontal lines top-to-bottom.
+    # 1. Vertical gradient: accent in middle, deep-dark at top/bottom
     mid_y = VERTICAL_H / 2
-    edge_rgb = (12, 12, 22)
+    edge_rgb = (10, 10, 20)
     for y in range(VERTICAL_H):
-        # Distance from middle, normalized 0..1
-        t = abs(y - mid_y) / mid_y
-        # Ease: stays accent-heavy near middle, darker at edges.
-        t = t ** 1.4
+        t = (abs(y - mid_y) / mid_y) ** 1.4
         r = int(accent_rgb[0] * (1 - t) + edge_rgb[0] * t)
         g = int(accent_rgb[1] * (1 - t) + edge_rgb[1] * t)
         b = int(accent_rgb[2] * (1 - t) + edge_rgb[2] * t)
         draw.line([(0, y), (VERTICAL_W, y)], fill=(r, g, b))
 
-    # 2. "SUBSCRIBE TO" line
-    f_small = _load_font(96)
+    # 2. Gold frame bars top and bottom — "case file" header/footer
+    bar_h = 10
+    draw.rectangle([0, 0, VERTICAL_W, bar_h], fill=GOLD)
+    draw.rectangle([0, VERTICAL_H - bar_h, VERTICAL_W, VERTICAL_H], fill=GOLD)
+    # Thin secondary stripes parallel to the bars for typography depth
+    draw.rectangle([0, bar_h + 8, VERTICAL_W, bar_h + 10], fill=GOLD)
+    draw.rectangle([0, VERTICAL_H - bar_h - 10, VERTICAL_W, VERTICAL_H - bar_h - 8], fill=GOLD)
+
+    # 3. Corner marks (asymmetric crops in each corner, evoke a stamped doc)
+    _draw_corner_marks(draw, color=GOLD, length=80, width=4, inset=44)
+
+    # 4. "SUBSCRIBE TO" line + flanking ornaments
+    f_small = _load_font(88)
     line1 = "SUBSCRIBE TO"
     bbox = draw.textbbox((0, 0), line1, font=f_small)
     w1 = bbox[2] - bbox[0]
     x1 = (VERTICAL_W - w1) // 2
-    y1 = int(VERTICAL_H * 0.30)
-    draw.text((x1 + 3, y1 + 3), line1, font=f_small, fill=(0, 0, 0))           # shadow
-    draw.text((x1, y1), line1, font=f_small, fill=(255, 255, 255))
+    y1 = int(VERTICAL_H * 0.26)
+    draw.text((x1 + 3, y1 + 3), line1, font=f_small, fill=SHADOW)
+    draw.text((x1, y1), line1, font=f_small, fill=WHITE)
 
-    # 3. Brand wordmark — big bold gold caps, scaled to fit width
+    # Decorative line + diamond on each side of "SUBSCRIBE TO"
+    line_y = y1 + (bbox[3] - bbox[1]) // 2 + 8
+    diamond = 16
+    margin = 40
+    # Left side
+    draw.line([(80, line_y), (x1 - margin - diamond, line_y)], fill=GOLD, width=3)
+    _draw_diamond(draw, cx=x1 - margin - diamond // 2, cy=line_y, size=diamond, color=GOLD)
+    # Right side
+    draw.line([(x1 + w1 + margin + diamond, line_y), (VERTICAL_W - 80, line_y)], fill=GOLD, width=3)
+    _draw_diamond(draw, cx=x1 + w1 + margin + diamond // 2, cy=line_y, size=diamond, color=GOLD)
+
+    # 5. Brand wordmark — big bold gold caps, scaled to 84% width
     line2 = brand.upper()
-    f_brand = _fit_font_to_width(draw, line2, max_width=int(VERTICAL_W * 0.86), start_size=320)
+    f_brand = _fit_font_to_width(draw, line2, max_width=int(VERTICAL_W * 0.84), start_size=320)
     bbox = draw.textbbox((0, 0), line2, font=f_brand)
     w2 = bbox[2] - bbox[0]
     h2 = bbox[3] - bbox[1]
     x2 = (VERTICAL_W - w2) // 2
-    y2 = int(VERTICAL_H * 0.36)
-    # Drop shadow for depth
-    draw.text((x2 + 5, y2 + 5), line2, font=f_brand, fill=(0, 0, 0))
-    draw.text((x2, y2), line2, font=f_brand, fill=(245, 208, 103))             # gold
+    y2 = int(VERTICAL_H * 0.33)
+    # Strong drop shadow for depth
+    for off in (8, 5):
+        draw.text((x2 + off, y2 + off), line2, font=f_brand, fill=SHADOW)
+    draw.text((x2, y2), line2, font=f_brand, fill=GOLD)
 
-    # 4. Red SUBSCRIBE pill — YouTube-style rounded rectangle
+    # 6. Underline + tagline below brand
+    underline_y = y2 + h2 + 55
+    underline_w = int(w2 * 0.48)
+    ux1 = (VERTICAL_W - underline_w) // 2
+    draw.rectangle([ux1, underline_y, ux1 + underline_w, underline_y + 5], fill=GOLD)
+
+    f_tag = _load_font(48)
+    tagline = "NEW CASE FILES DAILY"
+    bbox = draw.textbbox((0, 0), tagline, font=f_tag)
+    wt = bbox[2] - bbox[0]
+    draw.text(((VERTICAL_W - wt) // 2, underline_y + 30), tagline, font=f_tag, fill=WHITE)
+
+    # 7. Subscribe pill + bell icon to its left
     pill_text = "SUBSCRIBE"
-    f_pill = _load_font(112)
+    f_pill = _load_font(108)
     bbox = draw.textbbox((0, 0), pill_text, font=f_pill)
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
-    pad_x, pad_y = 80, 50
+    pad_x, pad_y = 78, 48
     pill_w = text_w + pad_x * 2
     pill_h = text_h + pad_y * 2
-    pill_x = (VERTICAL_W - pill_w) // 2
-    pill_y = int(VERTICAL_H * 0.62)
-    radius = pill_h // 2  # full half-circle ends = pill shape
-    # Soft drop shadow under pill
-    shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    sd = ImageDraw.Draw(shadow)
+
+    bell_size = 96
+    bell_gap = 32
+    total_w = bell_size + bell_gap + pill_w
+    group_x = (VERTICAL_W - total_w) // 2
+    pill_x = group_x + bell_size + bell_gap
+    pill_y = int(VERTICAL_H * 0.68)
+    bell_y = pill_y + (pill_h - bell_size) // 2
+    radius = pill_h // 2
+
+    # Pill shadow
+    shadow_img = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow_img)
     sd.rounded_rectangle(
-        [pill_x + 6, pill_y + 10, pill_x + pill_w + 6, pill_y + pill_h + 10],
-        radius=radius, fill=(0, 0, 0, 160),
+        [pill_x + 6, pill_y + 12, pill_x + pill_w + 6, pill_y + pill_h + 12],
+        radius=radius, fill=(0, 0, 0, 170),
     )
-    img.paste(shadow, (0, 0), shadow)
-    # The pill itself
+    img.paste(shadow_img, (0, 0), shadow_img)
+    # Pill
     draw.rounded_rectangle(
         [pill_x, pill_y, pill_x + pill_w, pill_y + pill_h],
-        radius=radius, fill=(204, 0, 0),
+        radius=radius, fill=RED,
     )
     # White pill text
     tx = pill_x + (pill_w - text_w) // 2
     ty = pill_y + (pill_h - text_h) // 2 - 8
-    draw.text((tx, ty), pill_text, font=f_pill, fill=(255, 255, 255))
+    draw.text((tx, ty), pill_text, font=f_pill, fill=WHITE)
+
+    # Bell icon
+    _draw_bell(draw, x=group_x, y=bell_y, size=bell_size, color=GOLD)
 
     img.save(out_path, "PNG")
+
+
+def _draw_diamond(draw, *, cx: int, cy: int, size: int, color) -> None:
+    half = size // 2
+    draw.polygon(
+        [(cx, cy - half), (cx + half, cy), (cx, cy + half), (cx - half, cy)],
+        fill=color,
+    )
+
+
+def _draw_corner_marks(draw, *, color, length: int, width: int, inset: int) -> None:
+    """L-shaped marks in each corner — like file-folder registration ticks."""
+    W, H = VERTICAL_W, VERTICAL_H
+    # Top-left
+    draw.rectangle([inset, inset, inset + length, inset + width], fill=color)
+    draw.rectangle([inset, inset, inset + width, inset + length], fill=color)
+    # Top-right
+    draw.rectangle([W - inset - length, inset, W - inset, inset + width], fill=color)
+    draw.rectangle([W - inset - width, inset, W - inset, inset + length], fill=color)
+    # Bottom-left
+    draw.rectangle([inset, H - inset - width, inset + length, H - inset], fill=color)
+    draw.rectangle([inset, H - inset - length, inset + width, H - inset], fill=color)
+    # Bottom-right
+    draw.rectangle([W - inset - length, H - inset - width, W - inset, H - inset], fill=color)
+    draw.rectangle([W - inset - width, H - inset - length, W - inset, H - inset], fill=color)
+
+
+def _draw_bell(draw, *, x: int, y: int, size: int, color) -> None:
+    """Stylized notification bell. Built from primitives so we don't need
+    an emoji font on the runner."""
+    cx = x + size // 2
+    # Small top knob (the bell's handle)
+    knob_r = size // 14
+    draw.ellipse(
+        [cx - knob_r, y, cx + knob_r, y + knob_r * 2],
+        fill=color,
+    )
+    # Dome (top half of an ellipse via pieslice)
+    dome_top = y + knob_r * 2
+    dome_bot = y + int(size * 0.75)
+    draw.pieslice(
+        [x + size // 8, dome_top - size // 6, x + size - size // 8, dome_bot + size // 8],
+        180, 360, fill=color,
+    )
+    # Bottom flange — a thin gold strip across the bell base
+    flange_y = dome_bot
+    draw.rectangle(
+        [x + 2, flange_y, x + size - 2, flange_y + size // 14],
+        fill=color,
+    )
+    # Clapper — small circle hanging below
+    clap_r = size // 12
+    draw.ellipse(
+        [cx - clap_r, flange_y + size // 14 + 4,
+         cx + clap_r, flange_y + size // 14 + 4 + clap_r * 2],
+        fill=color,
+    )
 
 
 def _fit_font_to_width(draw, text: str, *, max_width: int, start_size: int):
