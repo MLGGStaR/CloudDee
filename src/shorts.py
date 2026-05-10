@@ -60,9 +60,12 @@ def make_short(
     long_form_narration: str,
     channel: Channel,
     out_path: Path,
+    voice_override: str | None = None,
 ) -> Path:
     """Recap Short paired with a long-form video. Visuals come from the
-    long-form's panel pool (cycling for variety)."""
+    long-form's panel pool (cycling for variety). `voice_override` lets
+    the caller force a specific TTS voice (e.g. to match the parent
+    long-form's voice rotation pick)."""
     require_ffmpeg()
     if not scenes:
         raise RuntimeError("no scenes provided to make_short")
@@ -88,6 +91,7 @@ def make_short(
         visual_pool=visual_pool,
         channel=channel,
         openai_key=openai_key,
+        voice_override=voice_override,
         out_path=out_path,
     )
 
@@ -100,6 +104,7 @@ def make_standalone_short(
     record_context: str,
     work_dir: Path,
     out_path: Path,
+    voice_override: str | None = None,
 ) -> Path:
     """Short generated directly from a record. Fetches its own visuals."""
     require_ffmpeg()
@@ -145,6 +150,7 @@ def make_standalone_short(
         visual_pool=visual_pool,
         channel=channel,
         openai_key=settings.openai_api_key,
+        voice_override=voice_override,
         out_path=out_path,
     )
 
@@ -160,10 +166,12 @@ def _build_short_video(
     channel: Channel,
     openai_key: str,
     out_path: Path,
+    voice_override: str | None = None,
 ) -> Path:
     """Voice the narration, transcribe for captions, render the vertical
     timeline + outro, master loudness."""
     brand = channel.brand_name or channel.name
+    voice = voice_override or channel.voice
     # Last-resort word cap. The prompt asks for ≤125 words but if the
     # model overruns, hard-truncate at a sentence boundary so the audio
     # stays inside the budget and the outro flash card still plays.
@@ -174,7 +182,7 @@ def _build_short_video(
         _synthesize(
             openai_key,
             text=narration,
-            voice=channel.voice,
+            voice=voice,
             speed=channel.voice_speed,
             out_path=recap_audio,
         )

@@ -14,6 +14,17 @@ and labels — do not invent new ones:
    specific fact from the indictment or filing. Names, places, dollar
    amounts. Concrete.
 
+   **Vary the opening angle per record — pick the one that hits hardest for
+   this specific case. Do NOT default to the same style every video.**
+   Options:
+   - **The dollar figure** — open on the total alleged loss / fraud amount.
+   - **The single sentence** — a verbatim line from the indictment.
+   - **The contrast** — what the defendant publicly claimed vs. what the
+     filing alleges.
+   - **The day of arrest** — what was happening when agents arrived.
+   - **The aftermath** — the verdict or plea first, then jump back.
+   - **The pattern** — this case is one of N similar prosecutions.
+
 2. id: **`parties`**, label: **"The Parties"** (~45 seconds). Who is the
    defendant? Who brought the case? What's their background, only as
    supported by the record?

@@ -14,6 +14,17 @@ and labels — do not invent new ones:
    concrete number — dollar figure, number of investors, length of time the
    scheme ran. Lead with the bite.
 
+   **Vary the opening angle per record — pick the one that hits hardest for
+   this specific case. Do NOT default to the same style every video.**
+   Options:
+   - **The dollar amount** — investor losses, fraud size, restitution.
+   - **The pitch** — what they told investors vs. reality.
+   - **The smoking-gun communication** — one short quote from the
+     complaint (text, email, recorded call).
+   - **The collapse moment** — when the scheme unraveled.
+   - **The penalty** — final disgorgement or bar order, jump back.
+   - **The duration** — how long it ran before the SEC noticed.
+
 2. id: **`company`**, label: **"The Company"** (~1 minute). Who, what they
    purported to do, the legitimate business surface. Where they fit in the
    market.

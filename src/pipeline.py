@@ -7,6 +7,7 @@ Daily run, per enabled channel:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -50,6 +51,20 @@ def _override_int(env_name: str) -> int | None:
     except ValueError:
         return None
     return v if v >= 0 else None
+
+
+def _pick_voice(channel: Channel, seed: str) -> str:
+    """Deterministically pick a TTS voice from the channel's rotation pool.
+
+    Same `seed` (e.g. record.id) → same voice every time, so re-renders of
+    the same record use the same voice and a paired Short matches its
+    parent long-form. Falls back to `channel.voice` if no pool is set.
+    """
+    pool = list(channel.voices or [])
+    if not pool:
+        return channel.voice
+    h = int(hashlib.sha1(str(seed).encode("utf-8")).hexdigest(), 16)
+    return pool[h % len(pool)]
 
 
 def run_daily() -> None:
@@ -213,10 +228,16 @@ def _produce_long_form(
         update_production(conn, prod_id, status="scripted", script_path=str(script_path))
 
         # VOICE + per-scene SRT
+        # Pick a voice from the rotation pool deterministically by record id
+        # — so re-renders of the same record always use the same voice, and
+        # so the paired Short shares its parent's voice.
+        picked_voice = _pick_voice(channel, record.id)
+        log().info("[%s] voice=%s (record %s)",
+                   channel.slug, picked_voice, record.id)
         voiced = render_voiceover(
             api_key=settings.openai_api_key,
             script=script,
-            voice=channel.voice,
+            voice=picked_voice,
             speed=channel.voice_speed,
             out_dir=work_dir / "audio",
         )
@@ -304,6 +325,7 @@ def _produce_long_form(
                     long_form_title=script.title,
                     long_form_narration=script.full_narration,
                     channel=channel,
+                    voice_override=picked_voice,    # match long-form's rotation pick
                     out_path=short_path,
                 )
             except Exception as e:
@@ -457,6 +479,7 @@ def _produce_standalone_short(
             record=record,
             channel=channel,
             record_context=record_context,
+            voice_override=_pick_voice(channel, record.id),
             work_dir=work_dir,
             out_path=short_path,
         )
@@ -652,6 +675,7 @@ def _short_description(long_title: str, long_video_id: str, record: Record, chan
         f"Subscribe to {brand} for daily public-record breakdowns.\n\n"
         f"Source: {record.title}\n{record.url}\n"
         f"Published: {record.published_at}\n\n"
+        f"{_AI_DISCLOSURE}\n\n"
         "#Shorts"
     )
 
@@ -662,6 +686,7 @@ def _short_only_description(record: Record, channel: Channel) -> str:
         f"Subscribe to {brand} for daily public-record breakdowns.\n\n"
         f"Source: {record.title}\n{record.url}\n"
         f"Published: {record.published_at}\n\n"
+        f"{_AI_DISCLOSURE}\n\n"
         "#Shorts"
     )
 
@@ -702,8 +727,20 @@ def _with_source_block(description: str, record: Record) -> str:
         "Assertions about uncharged or unconvicted parties are characterized as "
         "allegations, consistent with the underlying source. Corrections welcome "
         "in the comments."
+        f"\n\n{_AI_DISCLOSURE}"
     )
     return (description or "")[:4500] + src_block
+
+
+# YouTube's "altered or synthetic content" disclosure. Surfaced in every
+# video description (separately from the upload-API flag) so reviewers and
+# viewers can both see it. Honest framing — "narration is synthesized,
+# facts are sourced" — is the same defense we use in YPP application
+# language and quota-increase justifications.
+_AI_DISCLOSURE = (
+    "Disclosure: Narration and some visuals are AI-generated. "
+    "All facts are sourced from the public records cited in this description."
+)
 
 
 def _discussion_comment(record: Record, channel: Channel) -> str:

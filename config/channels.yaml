@@ -11,8 +11,8 @@ channels:
     name: "CloudDee"                          # display + brand
     brand_name: "CloudDee"                    # outro CTA: "Subscribe to CloudDee"
     enabled: true
-    videos_per_run: 2                         # long-form videos per run
-    shorts_per_run: 5                         # TOTAL shorts per run (2 paired + 3 standalone)
+    videos_per_run: 1                         # long-form videos per run
+    shorts_per_run: 3                         # TOTAL shorts per run (1 paired + 2 standalone)
     make_shorts: true
     sources:
       - ntsb_aviation
@@ -30,7 +30,13 @@ channels:
     # Legacy single-prompt fallback if a record's source isn't mapped.
     script_prompt: script_court
     niche_keywords: [crash, indictment, sentenced, fraud, NTSB, SEC, DOJ, FOIA]
+    # Voice rotation pool — pipeline picks one deterministically per record
+    # (so the paired Short matches its parent long-form). Avoiding alloy
+    # (too generic) and shimmer (too high) — these four read as serious
+    # documentary narrators. `voice` below is the fallback if `voices`
+    # is empty.
     voice: onyx
+    voices: [onyx, echo, fable, nova]
     voice_speed: 0.95
     target_minutes: 8
     intro_sting: null

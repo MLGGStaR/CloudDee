@@ -92,6 +92,12 @@ def upload_video(
             "selfDeclaredMadeForKids": made_for_kids,
             "madeForKids": made_for_kids,
             "embeddable": True,
+            # YouTube "altered or synthetic content" disclosure flag, added
+            # to the API in 2024. We disclose because (a) narration is AI
+            # TTS and (b) some panels are gpt-image-1 outputs. Hiding this
+            # from YouTube's own detection is the worst case for YPP
+            # eligibility; declaring it upfront is the right move.
+            "containsSyntheticMedia": True,
         },
     }
     if publish_at:

@@ -23,6 +23,18 @@ Required structure (use these exact ids and labels — do not invent new ones):
    looking at." The viewer must feel compelled to keep watching by sentence
    two.
 
+   **Vary the opening angle per record — pick the one that hits hardest for
+   this specific case. Do NOT default to the same style every video.**
+   Options:
+   - **Final-second cockpit moment** — what was happening in the last 5
+     seconds before impact.
+   - **Single sensory detail** — a sound, a witness's view from the ground,
+     the weather minute by minute.
+   - **The number** — fatalities / hours of flight time / altitude lost.
+   - **The contradiction** — what the pilot/operator said vs. what the
+     record later showed.
+   - **The aftermath frame** — open at the wreck site, then jump back.
+
 2. id: **`setup`**, label: **"Setup"** (~1 minute). Aircraft, route, parties,
    weather, conditions. Concrete and specific.
 
