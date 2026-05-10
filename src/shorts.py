@@ -172,12 +172,21 @@ def _build_short_video(
         )
         recap_duration = ffprobe_duration(recap_audio)
 
+        srt_text = ""
         try:
-            srt_text = transcribe_to_srt(openai_key, recap_audio)
-            srt_text = reflow_srt_max_words(srt_text, max_words=4)
+            raw_srt = transcribe_to_srt(openai_key, recap_audio)
+            log().info("  short whisper raw: %d chars, head=%r",
+                       len(raw_srt or ""), (raw_srt or "")[:160])
+            reflowed = reflow_srt_max_words(raw_srt, max_words=4)
+            # Fall back to the raw Whisper output if reflow ate everything
+            # (e.g. an SRT format quirk that the reflow parser couldn't
+            # handle). Better to show captions in original phrasing than
+            # to show none at all.
+            srt_text = reflowed if reflowed.strip() else raw_srt
+            if not srt_text.strip():
+                log().warning("  short: whisper returned empty SRT — captions will be missing")
         except Exception as e:
-            log().warning("Shorts transcribe failed (no captions): %s", e)
-            srt_text = ""
+            log().warning("  short transcribe failed (no captions): %s", e)
         srt_path = td_path / "recap.srt"
         if srt_text:
             srt_path.write_text(srt_text, encoding="utf-8")
