@@ -437,8 +437,12 @@ def produce_standalone_short_for_channel(
     slot: int = 0,
 ) -> dict | None:
     log().info("[%s] short slot %d — selecting top record …", channel.slug, slot)
+    # Lower min_total for standalone shorts: after the long-form takes the
+    # top record, the remaining pool can be thin. 10 is permissive enough
+    # to reliably fill all standalone-short slots most days, while still
+    # filtering truly weak records (a 5-or-below combined score is rare).
     candidates = top_records_for_channel(
-        conn, channel_slug=channel.slug, limit=5, min_total=15,
+        conn, channel_slug=channel.slug, limit=5, min_total=10,
         sources=channel.sources or None,
     )
     if not candidates:
