@@ -436,32 +436,46 @@ def produce_standalone_short_for_channel(
     channel: Channel,
     slot: int = 0,
 ) -> dict | None:
-    log().info("[%s] short slot %d — selecting top record …", channel.slug, slot)
-    # Lower min_total for standalone shorts: after the long-form takes the
-    # top record, the remaining pool can be thin. 10 is permissive enough
-    # to reliably fill all standalone-short slots most days, while still
-    # filtering truly weak records (a 5-or-below combined score is rare).
+    log().info("[%s] short slot %d — selecting candidates …", channel.slug, slot)
+    # Pull a wider candidate pool so we can skip past flagged or write-failed
+    # records without prematurely declaring "no more eligible records". The
+    # previous code only tried candidates[0]; if that record was flagged or
+    # the script writer returned non-JSON, the whole slot died.
     candidates = top_records_for_channel(
-        conn, channel_slug=channel.slug, limit=5, min_total=10,
+        conn, channel_slug=channel.slug, limit=10, min_total=10,
         sources=channel.sources or None,
     )
     if not candidates:
         return None
 
-    record, score = candidates[0]
-    log().info(
-        "[%s] standalone short — record %s (%s) — total=%s — %r",
-        channel.slug, record.id, record.source,
-        score.drama + score.novelty + score.visualization, record.title[:80],
-    )
+    for record, score in candidates:
+        log().info(
+            "[%s] standalone short — record %s (%s) — total=%s — %r",
+            channel.slug, record.id, record.source,
+            score.drama + score.novelty + score.visualization, record.title[:80],
+        )
 
-    if score.flags.get("sealed") or score.flags.get("minor_involved") or score.flags.get("tragedy_only"):
-        log().info("[%s] record %s flagged: %s — skipping", channel.slug, record.id, score.flags)
-        prod_id = create_production(conn, record_id=record.id, channel_slug=channel.slug)
-        mark_production_failed(conn, prod_id, f"flagged: {json.dumps(score.flags)}")
-        return None
+        if score.flags.get("sealed") or score.flags.get("minor_involved") or score.flags.get("tragedy_only"):
+            log().info("[%s] record %s flagged: %s — skipping",
+                       channel.slug, record.id, score.flags)
+            prod_id = create_production(conn, record_id=record.id, channel_slug=channel.slug)
+            mark_production_failed(conn, prod_id, f"flagged: {json.dumps(score.flags)}")
+            continue
 
-    return _produce_standalone_short(settings, conn, channel, record, score)
+        try:
+            result = _produce_standalone_short(settings, conn, channel, record, score)
+            if result is not None:
+                return result
+            log().info("[%s] record %s: produced None (script refused or empty) — trying next",
+                       channel.slug, record.id)
+        except YouTubeQuotaExceeded:
+            raise   # propagate; outer loop handles quota circuit-breaking
+        except Exception as e:
+            log().exception("[%s] record %s: standalone short failed (%s) — trying next",
+                            channel.slug, record.id, e)
+
+    log().info("[%s] all standalone-short candidates exhausted", channel.slug)
+    return None
 
 
 def _produce_standalone_short(

@@ -300,13 +300,26 @@ def _write_standalone_short_script(
         text = text.split("```", 2)[1]
         if text.lower().startswith("json"):
             text = text[4:].strip()
-    data = json.loads(text)
+    # Defensive parse: if Claude returns empty or non-JSON for this record
+    # (sometimes happens with edge-case content), log and return None so
+    # the pipeline can move on to the next candidate instead of crashing
+    # the whole slot.
+    if not text:
+        log().warning("standalone short writer returned empty for record %s", record.id)
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        log().warning("standalone short writer returned non-JSON for record %s: %s | head=%r",
+                      record.id, e, text[:200])
+        return None
     if data.get("refuse"):
         log().info("standalone short writer refused: %s", data.get("reason"))
         return None
     narration = (data.get("narration") or "").strip()
     if not narration:
-        raise RuntimeError("standalone short returned empty narration")
+        log().warning("standalone short returned empty narration for record %s", record.id)
+        return None
     return narration
 
 
