@@ -403,6 +403,17 @@ def _produce_long_form(
                     category_id=str(channel.youtube.get("category_id", "27")),
                     privacy=channel.youtube.get("privacy", "public"),
                 )
+                # Post a channel-owner comment with the long-form link. Pinning
+                # via API isn't supported, but channel-owner comments are
+                # auto-highlighted by YouTube at the top of the comments tab,
+                # which is the most visible non-Studio placement available.
+                post_comment(
+                    refresh_token=refresh_token,
+                    client_id=settings.google_client_id,
+                    client_secret=settings.google_client_secret,
+                    video_id=short_video_id,
+                    text=_short_link_comment(long_video_id, script.title),
+                )
             except Exception as e:
                 log().warning("[%s] short upload failed: %s", channel.slug, e)
 
@@ -534,6 +545,17 @@ def _produce_standalone_short(
             category_id=str(channel.youtube.get("category_id", "27")),
             privacy=channel.youtube.get("privacy", "public"),
         )
+
+        # If we found a related long-form, post a channel-owner comment
+        # linking to it (auto-highlighted at top of the comments tab).
+        if related and related.get("video_id"):
+            post_comment(
+                refresh_token=refresh_token,
+                client_id=settings.google_client_id,
+                client_secret=settings.google_client_secret,
+                video_id=short_video_id,
+                text=_short_link_comment(related["video_id"], related.get("title", "")),
+            )
 
         mark_production_complete(
             conn, prod_id,
@@ -735,6 +757,21 @@ def _short_only_description(
         f"Published: {record.published_at}\n\n"
         f"{_AI_DISCLOSURE}\n\n"
         "#Shorts"
+    )
+
+
+def _short_link_comment(long_video_id: str, long_title: str) -> str:
+    """Channel-owner comment text posted on every Short, linking to the
+    related long-form. YouTube's Data API cannot PIN comments, but
+    channel-owner comments are auto-highlighted at the top of the
+    comments tab — the closest non-Studio approximation of the native
+    "Related video" UI card. The Short's narration ends with
+    "Full breakdown linked below" pointing viewers here."""
+    title = (long_title or "").strip()
+    title_line = f"\n   ({title[:90]})" if title else ""
+    return (
+        f"▶ Full breakdown: https://youtube.com/watch?v={long_video_id}"
+        f"{title_line}"
     )
 
 
