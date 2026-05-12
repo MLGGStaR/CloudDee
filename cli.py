@@ -210,11 +210,14 @@ def tiktok_oauth_init():
     rprint("[bold]4.[/bold] Copy the [cyan]code[/cyan] value (everything between [cyan]code=[/cyan] and [cyan]&state=[/cyan]) and paste below.\n")
 
     code = typer.prompt("Paste the code value")
+    # URL-decode in case the user pasted directly from the browser URL bar
+    # (TikTok codes commonly contain *, !, etc. which arrive as %2A, %21).
+    code = urllib.parse.unquote(code.strip())
 
     tokens = exchange_code_for_tokens(
         client_key=client_key,
         client_secret=client_secret,
-        code=code.strip(),
+        code=code,
         redirect_uri=redirect_uri,
     )
     refresh_token = tokens.get("refresh_token")
