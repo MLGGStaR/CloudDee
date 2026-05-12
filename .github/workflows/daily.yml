@@ -1,13 +1,13 @@
 name: docket-daily
 
 # Runs the full daily pipeline. Schedule is in UTC.
-# 08:00 UTC = 03:00 ET / 00:00 PT / 12:00 UAE. GitHub cron is typically
-# delayed 0-3h, so the run lands 11:00-14:00 UAE local — early afternoon
-# for the channel owner, with the day's US agency releases already
-# settled from the prior evening.
+# 07:00 UTC = 02:00 ET / 23:00 PT (prev day) / 11:00 UAE. GitHub cron
+# is typically delayed 0-3h, so the run lands 10:00-13:00 UAE local —
+# late morning for the channel owner, with the day's US agency releases
+# already settled from the prior evening.
 on:
   schedule:
-    - cron: "0 8 * * *"
+    - cron: "0 7 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
