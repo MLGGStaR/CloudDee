@@ -172,6 +172,12 @@ def post_comment(
     the YouTube Data API does not currently expose pinning. The comment
     will appear from the channel itself, which gets it visual prominence
     in the comments tab even before a manual pin.
+
+    NOTE: YouTube may auto-hold comments containing URLs in "Held for
+    review" state (spam filter), especially on new channels. The API
+    call still returns 200 in that case — there's no way to tell from
+    here whether it was published or held. Check YouTube Studio →
+    Comments → Held for review if comments aren't appearing.
     """
     try:
         yt = _client_for_channel(
@@ -189,13 +195,25 @@ def post_comment(
         }
         resp = yt.commentThreads().insert(part="snippet", body=body).execute()
         cid = resp.get("id")
-        log().info("  posted comment %s on %s", cid, video_id)
+        log().info("  posted comment %s on %s (text head=%r)",
+                   cid, video_id, text[:80])
         return cid
     except HttpError as e:
-        log().warning("comment post failed for %s: %s", video_id, e)
+        # Surface the actual HTTP status + response body so we can tell
+        # whether it's a permissions issue, a "video not found" timing
+        # race, a quota cap, or a YouTube policy block.
+        status = getattr(e.resp, "status", "?")
+        body_text = ""
+        try:
+            body_text = (e.content or b"").decode("utf-8", errors="ignore")[:500]
+        except Exception:
+            pass
+        log().warning("comment post failed for %s [status=%s]: %s | body=%s",
+                      video_id, status, e, body_text)
         return None
     except Exception as e:
-        log().warning("comment post failed for %s: %s", video_id, e)
+        log().warning("comment post failed for %s (non-HTTP): %s",
+                      video_id, e)
         return None
 
 
