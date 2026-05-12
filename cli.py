@@ -181,6 +181,9 @@ def tiktok_oauth_init():
     import os
     import urllib.parse
 
+    # Import config to trigger dotenv loading (load_dotenv runs as a side
+    # effect of importing src.config). Without this, .env vars aren't read.
+    from src.config import load_settings  # noqa: F401
     from src.upload.tiktok import exchange_code_for_tokens
 
     client_key = os.environ.get("TIKTOK_CLIENT_KEY", "").strip()
