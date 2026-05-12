@@ -547,14 +547,18 @@ def _produce_standalone_short(
         )
 
         # If we found a related long-form, post a channel-owner comment
-        # linking to it (auto-highlighted at top of the comments tab).
+        # linking to it. Worded as "another case file" (a recommendation)
+        # rather than "full breakdown" because for standalone Shorts the
+        # link is to a different topic from this Short, not its full
+        # version. Paired Shorts use a different helper that does say
+        # "full breakdown" since they ARE the same record.
         if related and related.get("video_id"):
             post_comment(
                 refresh_token=refresh_token,
                 client_id=settings.google_client_id,
                 client_secret=settings.google_client_secret,
                 video_id=short_video_id,
-                text=_short_link_comment(related["video_id"], related.get("title", "")),
+                text=_more_cases_comment(related["video_id"], related.get("title", "")),
             )
 
         mark_production_complete(
@@ -744,9 +748,12 @@ def _short_only_description(
     brand = channel.brand_name or channel.name
     related_block = ""
     if related and related.get("video_id"):
-        title = (related.get("title") or "Full case file").strip()
+        title = (related.get("title") or "Another case file").strip()
+        # Phrased as "another case file" because for standalone Shorts
+        # the linked long-form is a different topic, not this Short's
+        # full version.
         related_block = (
-            f"▶ Watch the full breakdown: "
+            f"▶ Another case file: "
             f"https://youtube.com/watch?v={related['video_id']}\n"
             f"   ({title[:80]})\n\n"
         )
@@ -761,16 +768,26 @@ def _short_only_description(
 
 
 def _short_link_comment(long_video_id: str, long_title: str) -> str:
-    """Channel-owner comment text posted on every Short, linking to the
-    related long-form. YouTube's Data API cannot PIN comments, but
-    channel-owner comments are auto-highlighted at the top of the
-    comments tab — the closest non-Studio approximation of the native
-    "Related video" UI card. The Short's narration ends with
-    "Full breakdown linked below" pointing viewers here."""
+    """Paired-short comment: the link IS the full breakdown of this
+    Short's record. Channel-owner comments are auto-highlighted at top
+    of the comments tab — most visible non-Studio placement available."""
     title = (long_title or "").strip()
     title_line = f"\n   ({title[:90]})" if title else ""
     return (
         f"▶ Full breakdown: https://youtube.com/watch?v={long_video_id}"
+        f"{title_line}"
+    )
+
+
+def _more_cases_comment(long_video_id: str, long_title: str) -> str:
+    """Standalone-short comment: the link is to a DIFFERENT case from
+    the same channel, not the full version of this Short. Phrased as a
+    related-content recommendation to avoid misleading viewers who'd
+    expect "Full breakdown" to expand the exact same story."""
+    title = (long_title or "").strip()
+    title_line = f"\n   ({title[:90]})" if title else ""
+    return (
+        f"▶ Another case file: https://youtube.com/watch?v={long_video_id}"
         f"{title_line}"
     )
 
