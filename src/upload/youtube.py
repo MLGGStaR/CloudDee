@@ -23,7 +23,11 @@ from ..utils import log
 
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload",
-          "https://www.googleapis.com/auth/youtube"]
+          "https://www.googleapis.com/auth/youtube",
+          # Required for captions.insert + commentThreads.insert. The plain
+          # `youtube` scope does NOT cover these — 403 insufficientPermissions
+          # without `force-ssl`.
+          "https://www.googleapis.com/auth/youtube.force-ssl"]
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 

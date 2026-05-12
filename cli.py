@@ -147,11 +147,19 @@ def oauth_init():
             "redirect_uris": ["http://localhost"],
         }
     }
+    # Scopes:
+    #   youtube.upload   — videos.insert (upload the file)
+    #   youtube          — videos/playlists read+write, set thumbnails
+    #   youtube.force-ssl — captions.insert + commentThreads.insert
+    #                      (both required for our captions + auto-comment
+    #                      flow; without it those calls return 403
+    #                      "insufficientPermissions")
     flow = InstalledAppFlow.from_client_config(
         client_config,
         scopes=[
             "https://www.googleapis.com/auth/youtube.upload",
             "https://www.googleapis.com/auth/youtube",
+            "https://www.googleapis.com/auth/youtube.force-ssl",
         ],
     )
     creds = flow.run_local_server(port=0, prompt="consent", access_type="offline")
