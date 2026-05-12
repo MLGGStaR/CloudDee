@@ -168,5 +168,61 @@ def oauth_init():
     rprint(json.dumps({"channel-slug": creds.refresh_token}, indent=2))
 
 
+@app.command("tiktok-oauth-init")
+def tiktok_oauth_init():
+    """One-time: get a TikTok refresh token for the channel's TikTok account.
+
+    Reads TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET from the environment
+    (see .env / GitHub Actions secrets). Opens TikTok's auth URL — sign in
+    with the channel's TikTok account, click Authorize, then copy the
+    `code` query param from the redirect URL back into this terminal.
+    Prints the refresh_token to drop into the TIKTOK_REFRESH_TOKEN secret.
+    """
+    import os
+    import urllib.parse
+
+    from src.upload.tiktok import exchange_code_for_tokens
+
+    client_key = os.environ.get("TIKTOK_CLIENT_KEY", "").strip()
+    client_secret = os.environ.get("TIKTOK_CLIENT_SECRET", "").strip()
+    if not client_key or not client_secret:
+        rprint("[red]TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET must be set in .env[/red]")
+        raise typer.Exit(2)
+
+    redirect_uri = "https://mlggstar.github.io/CloudDee/"
+    state = "clouddee-oauth"
+    params = {
+        "client_key": client_key,
+        "scope": "user.info.basic,video.publish",
+        "response_type": "code",
+        "redirect_uri": redirect_uri,
+        "state": state,
+    }
+    auth_url = f"https://www.tiktok.com/v2/auth/authorize/?{urllib.parse.urlencode(params)}"
+
+    rprint("\n[bold]1.[/bold] Open this URL in your browser (logged into the right TikTok account):\n")
+    rprint(f"   {auth_url}\n")
+    rprint("[bold]2.[/bold] Sign in to TikTok and click Authorize.")
+    rprint(f"[bold]3.[/bold] Your browser will land on {redirect_uri} with [cyan]?code=XXX&state={state}[/cyan]")
+    rprint("[bold]4.[/bold] Copy the [cyan]code[/cyan] value (everything between [cyan]code=[/cyan] and [cyan]&state=[/cyan]) and paste below.\n")
+
+    code = typer.prompt("Paste the code value")
+
+    tokens = exchange_code_for_tokens(
+        client_key=client_key,
+        client_secret=client_secret,
+        code=code.strip(),
+        redirect_uri=redirect_uri,
+    )
+    refresh_token = tokens.get("refresh_token")
+    if not refresh_token:
+        rprint(f"[red]No refresh_token in response. Full response:[/red]\n{tokens}")
+        raise typer.Exit(2)
+
+    rprint("\n[bold green]TikTok refresh token obtained.[/bold green]")
+    rprint("Add this to your [cyan]TIKTOK_REFRESH_TOKEN[/cyan] GitHub Actions secret:\n")
+    rprint(refresh_token)
+
+
 if __name__ == "__main__":
     app()

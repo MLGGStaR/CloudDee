@@ -49,6 +49,14 @@ jobs:
       GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
       GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
       YT_REFRESH_TOKENS_JSON: ${{ secrets.YT_REFRESH_TOKENS_JSON }}
+      # TikTok — optional. If any of these are unset, TikTok upload is
+      # silently skipped (YouTube run is unaffected). Set TIKTOK_PRIVACY to
+      # PUBLIC_TO_EVERYONE only after the TikTok app audit is approved;
+      # unaudited apps are forced to SELF_ONLY by TikTok regardless.
+      TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+      TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+      TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
+      TIKTOK_PRIVACY: ${{ vars.TIKTOK_PRIVACY || 'SELF_ONLY' }}
       DOCKET_DB_PATH: state/docket.db
       DOCKET_OUTPUT_DIR: output
       DOCKET_LOG_LEVEL: INFO

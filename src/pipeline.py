@@ -31,6 +31,7 @@ from .script import write_script
 from .shorts import make_short, make_standalone_short
 from .thumbnail import make_thumbnail
 from .transcribe import merge_srt
+from .upload.tiktok import TikTokError, upload_video as tiktok_upload_video
 from .upload.youtube import (
     YouTubeQuotaExceeded,
     post_comment,
@@ -414,6 +415,13 @@ def _produce_long_form(
                     video_id=short_video_id,
                     text=_short_link_comment(long_video_id, script.title),
                 )
+                # Mirror to TikTok if configured.
+                _try_tiktok_upload(
+                    settings,
+                    file_path=short_path,
+                    caption=_tiktok_caption(script.title, record, channel),
+                    label="paired-short",
+                )
             except Exception as e:
                 log().warning("[%s] short upload failed: %s", channel.slug, e)
 
@@ -560,6 +568,14 @@ def _produce_standalone_short(
                 video_id=short_video_id,
                 text=_more_cases_comment(related["video_id"], related.get("title", "")),
             )
+
+        # Mirror to TikTok if configured.
+        _try_tiktok_upload(
+            settings,
+            file_path=short_path,
+            caption=_tiktok_caption(short_title, record, channel),
+            label="standalone-short",
+        )
 
         mark_production_complete(
             conn, prod_id,
@@ -765,6 +781,54 @@ def _short_only_description(
         f"{_AI_DISCLOSURE}\n\n"
         "#Shorts"
     )
+
+
+def _tiktok_caption(title: str, record: Record, channel: Channel) -> str:
+    """Build a TikTok caption from a short's title + per-source hashtags.
+
+    TikTok caption max 2,200 chars but engagement is highest in the first
+    ~100 chars — keep title up-front, hashtags after."""
+    brand = (channel.brand_name or channel.name or "").replace(" ", "")
+    src_tags = {
+        "ntsb_aviation": ["aviation", "ntsb", "planecrash", "pilotlife", "aviationsafety"],
+        "ntsb_marine":   ["maritime", "coastguard", "shipwreck"],
+        "courtlistener": ["federalcourt", "truecrime", "law"],
+        "doj":           ["truecrime", "doj", "federalcourt", "indictment"],
+        "sec":           ["wallstreet", "fraud", "stocks", "finance", "secenforcement"],
+    }.get(record.source, ["truecrime", "news"])
+    hashtags = ["fyp", "publicrecords", brand.lower() or "documentary"] + src_tags
+    hashtags = ["#" + t.strip("#").lower() for t in hashtags if t.strip()]
+    return f"{title[:120]}\n\n{' '.join(hashtags[:12])}"
+
+
+def _try_tiktok_upload(
+    settings: Settings,
+    *,
+    file_path: Path,
+    caption: str,
+    label: str,
+) -> str | None:
+    """Optional secondary upload to TikTok. Never raises — TikTok failures
+    must not break the YouTube run. Returns the publish_id or None."""
+    if not settings.tiktok_enabled:
+        return None
+    try:
+        publish_id = tiktok_upload_video(
+            client_key=settings.tiktok_client_key,
+            client_secret=settings.tiktok_client_secret,
+            refresh_token=settings.tiktok_refresh_token,
+            file_path=file_path,
+            caption=caption,
+            privacy_level=settings.tiktok_privacy,
+        )
+        log().info("  tiktok %s uploaded: publish_id=%s privacy=%s",
+                   label, publish_id, settings.tiktok_privacy)
+        return publish_id
+    except TikTokError as e:
+        log().warning("  tiktok %s upload failed (continuing): %s", label, e)
+    except Exception as e:
+        log().warning("  tiktok %s upload failed (non-API): %s", label, e)
+    return None
 
 
 def _short_link_comment(long_video_id: str, long_title: str) -> str:
