@@ -16,8 +16,9 @@ and the subscribe card disappears). Make it:
 - **Ends with one sharp closing line** — the lesson, the verdict, the
   outcome. Resonant.
 - **After the closing line, append exactly this sentence as the final
-  line of narration: "Full breakdown linked below."** This points
-  viewers at a related long-form case file linked from the description.
+  line of narration: "Full breakdown linked in the comments."** The
+  editor pins a channel-owner comment with the related long-form's
+  URL — that's where this callout sends viewers.
 - **Do NOT add any other CTA** — the editor appends a separate 1-second
   "subscribe to {brand_name}" flash card after the audio ends.
 - Cite the source by **domain only**: data.ntsb.gov, sec.gov, justice.gov,
