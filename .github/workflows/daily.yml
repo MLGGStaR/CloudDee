@@ -87,8 +87,17 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu
+      - name: Ensure ffmpeg + fonts available
+        # ffmpeg is pre-installed on ubuntu-latest, so we only install
+        # what's missing. Previous version ran `apt-get update` every run
+        # which occasionally stalled for 45+ minutes on slow Ubuntu
+        # mirrors. Now we skip update entirely unless an install is
+        # actually needed, and ffmpeg short-circuits since it's preinstalled.
+        run: |
+          set -e
+          which ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ffmpeg)
+          dpkg -s fonts-dejavu >/dev/null 2>&1 || (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends fonts-dejavu)
+          ffmpeg -version | head -1
 
       - name: Install Python deps
         run: |
