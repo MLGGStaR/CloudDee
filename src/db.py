@@ -196,6 +196,49 @@ def top_records_for_channel(
     return out
 
 
+def latest_longform_for_channel(
+    conn: sqlite3.Connection,
+    *,
+    channel_slug: str,
+    source: str | None = None,
+) -> dict | None:
+    """Return the channel's most recent uploaded long-form video, used to
+    link from a standalone Short's description ("watch the full breakdown").
+
+    Long-forms vs standalone-shorts are distinguished by video_path: the
+    standalone short pipeline writes work dirs prefixed `short_`, so any
+    production whose video_path does NOT contain `/short_` is a long-form
+    (paired shorts share the long-form's production row).
+
+    If `source` is given, prefers a long-form from the same source; falls
+    back to any long-form for the channel.
+    """
+    base_sql = """
+        SELECT p.youtube_video_id, r.source, r.title
+        FROM productions p
+        JOIN records r ON r.id = p.record_id
+        WHERE p.channel_slug = ?
+          AND p.youtube_video_id IS NOT NULL
+          AND (p.video_path IS NULL OR p.video_path NOT LIKE '%/short_%')
+    """
+    if source:
+        row = conn.execute(
+            base_sql + " AND r.source = ? ORDER BY p.completed_at DESC LIMIT 1",
+            (channel_slug, source),
+        ).fetchone()
+        if row:
+            return {"video_id": row["youtube_video_id"],
+                    "source": row["source"], "title": row["title"]}
+    row = conn.execute(
+        base_sql + " ORDER BY p.completed_at DESC LIMIT 1",
+        (channel_slug,),
+    ).fetchone()
+    if not row:
+        return None
+    return {"video_id": row["youtube_video_id"],
+            "source": row["source"], "title": row["title"]}
+
+
 def create_production(conn: sqlite3.Connection, *, record_id: int, channel_slug: str) -> int:
     cur = conn.execute(
         """INSERT INTO productions (record_id, channel_slug, status, started_at)

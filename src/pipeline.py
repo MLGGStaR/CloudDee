@@ -19,8 +19,9 @@ from pathlib import Path
 from . import ingest
 from .config import Channel, Settings, load_settings
 from .db import (
-    Record, Score, close_run, connect, create_production, mark_production_complete,
-    mark_production_failed, open_run, top_records_for_channel, update_production,
+    Record, Score, close_run, connect, create_production, latest_longform_for_channel,
+    mark_production_complete, mark_production_failed, open_run,
+    top_records_for_channel, update_production,
 )
 from .images import fetch_visual
 from .maps import location_from_record, map_for_location
@@ -515,13 +516,20 @@ def _produce_standalone_short(
             raise RuntimeError(f"no YT refresh token for channel {channel.slug}")
 
         short_title = _shorts_title(_short_title_from_record(record))
+        # Resolve a related long-form to link from the description (the
+        # narration ends with "Full breakdown linked below" — this is the
+        # link viewers see). Prefer same-source long-form; fall back to
+        # any recent long-form from this channel.
+        related = latest_longform_for_channel(
+            conn, channel_slug=channel.slug, source=record.source,
+        )
         short_video_id = upload_video(
             refresh_token=refresh_token,
             client_id=settings.google_client_id,
             client_secret=settings.google_client_secret,
             file_path=short_path,
             title=short_title,
-            description=_short_only_description(record, channel),
+            description=_short_only_description(record, channel, related=related),
             tags=_short_tags_for_record(record, channel),
             category_id=str(channel.youtube.get("category_id", "27")),
             privacy=channel.youtube.get("privacy", "public"),
@@ -687,9 +695,13 @@ def _shorts_title(long_title: str) -> str:
 
 
 def _short_description(long_title: str, long_video_id: str, record: Record, channel: Channel) -> str:
+    """Paired-short description. The narration ends with "Full breakdown
+    linked below" — this is that link at the top of the description."""
     brand = channel.brand_name or channel.name
     return (
-        f"Full video: https://youtube.com/watch?v={long_video_id}\n\n"
+        f"▶ Watch the full breakdown: "
+        f"https://youtube.com/watch?v={long_video_id}\n"
+        f"   ({long_title[:80]})\n\n"
         f"Subscribe to {brand} for daily public-record breakdowns.\n\n"
         f"Source: {record.title}\n{record.url}\n"
         f"Published: {record.published_at}\n\n"
@@ -698,9 +710,26 @@ def _short_description(long_title: str, long_video_id: str, record: Record, chan
     )
 
 
-def _short_only_description(record: Record, channel: Channel) -> str:
+def _short_only_description(
+    record: Record,
+    channel: Channel,
+    *,
+    related: dict | None = None,
+) -> str:
+    """Standalone-short description. If `related` is provided, the related
+    long-form video link is placed at the top — this is what the narration's
+    "Full breakdown linked below" callout points at."""
     brand = channel.brand_name or channel.name
+    related_block = ""
+    if related and related.get("video_id"):
+        title = (related.get("title") or "Full case file").strip()
+        related_block = (
+            f"▶ Watch the full breakdown: "
+            f"https://youtube.com/watch?v={related['video_id']}\n"
+            f"   ({title[:80]})\n\n"
+        )
     return (
+        f"{related_block}"
         f"Subscribe to {brand} for daily public-record breakdowns.\n\n"
         f"Source: {record.title}\n{record.url}\n"
         f"Published: {record.published_at}\n\n"

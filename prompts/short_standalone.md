@@ -15,8 +15,11 @@ and the subscribe card disappears). Make it:
   Compressed but coherent. Each sentence must add information.
 - **Ends with one sharp closing line** — the lesson, the verdict, the
   outcome. Resonant.
-- **Does NOT end with a CTA** — the editor appends a 1-second "subscribe to
-  {brand_name}" flash card after the audio ends.
+- **After the closing line, append exactly this sentence as the final
+  line of narration: "Full breakdown linked below."** This points
+  viewers at a related long-form case file linked from the description.
+- **Do NOT add any other CTA** — the editor appends a separate 1-second
+  "subscribe to {brand_name}" flash card after the audio ends.
 - Cite the source by **domain only**: data.ntsb.gov, sec.gov, justice.gov,
   courtlistener.com. Never read full URLs.
 - No "in this video," "today on the channel," "let's break down."
