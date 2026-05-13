@@ -509,6 +509,11 @@ def _produce_standalone_short(
     work_dir = settings.output_dir / channel.slug / f"short_{prod_id:06d}_{slugify(record.title, max_len=50)}"
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    # ===== PHASE 1: render + YouTube upload =====
+    # Anything that fails here is recoverable: we mark the production
+    # failed and the caller (produce_standalone_short_for_channel) tries
+    # the next candidate. This is the SAFE phase to retry — no YouTube
+    # video has been published yet.
     try:
         record_context = _record_context(record)
         short_path = work_dir / "short.mp4"
@@ -535,10 +540,6 @@ def _produce_standalone_short(
             raise RuntimeError(f"no YT refresh token for channel {channel.slug}")
 
         short_title = _shorts_title(_short_title_from_record(record))
-        # Resolve a related long-form to link from the description (the
-        # narration ends with "Full breakdown linked below" — this is the
-        # link viewers see). Prefer same-source long-form; fall back to
-        # any recent long-form from this channel.
         related = latest_longform_for_channel(
             conn, channel_slug=channel.slug, source=record.source,
         )
@@ -553,13 +554,19 @@ def _produce_standalone_short(
             category_id=str(channel.youtube.get("category_id", "27")),
             privacy=channel.youtube.get("privacy", "public"),
         )
+    except Exception as e:
+        # Render or YouTube upload itself failed — mark + re-raise so the
+        # caller can try the next candidate. No YouTube video was published
+        # so retrying is safe.
+        mark_production_failed(conn, prod_id, str(e))
+        raise
 
-        # If we found a related long-form, post a channel-owner comment
-        # linking to it. Worded as "another case file" (a recommendation)
-        # rather than "full breakdown" because for standalone Shorts the
-        # link is to a different topic from this Short, not its full
-        # version. Paired Shorts use a different helper that does say
-        # "full breakdown" since they ARE the same record.
+    # ===== PHASE 2: post-upload side effects =====
+    # YouTube video IS now live. Any failure below is non-fatal and MUST
+    # NOT propagate — otherwise the caller's iterate-candidates loop will
+    # think the slot failed and retry on the NEXT record, uploading
+    # ANOTHER video. (That's what caused 7 uploads when 4 were configured.)
+    try:
         if related and related.get("video_id"):
             post_comment(
                 refresh_token=refresh_token,
@@ -568,32 +575,38 @@ def _produce_standalone_short(
                 video_id=short_video_id,
                 text=_more_cases_comment(related["video_id"], related.get("title", "")),
             )
+    except Exception as e:
+        log().warning("[%s] post-upload comment failed (continuing): %s", channel.slug, e)
 
-        # Mirror to TikTok if configured.
+    try:
         _try_tiktok_upload(
             settings,
             file_path=short_path,
             caption=_tiktok_caption(short_title, record, channel),
             label="standalone-short",
         )
+    except Exception as e:
+        # _try_tiktok_upload already swallows TikTok errors, but be extra
+        # defensive: never let a post-upload step take down the slot.
+        log().warning("[%s] post-upload TikTok step failed (continuing): %s", channel.slug, e)
 
+    try:
         mark_production_complete(
             conn, prod_id,
             youtube_video_id=short_video_id,
             video_path=str(short_path),
             thumbnail_path="",
         )
-        return {
-            "channel": channel.slug,
-            "title": short_title,
-            "short_id": short_video_id,
-            "short_url": f"https://youtube.com/shorts/{short_video_id}",
-            "kind": "short",
-        }
-
     except Exception as e:
-        mark_production_failed(conn, prod_id, str(e))
-        raise
+        log().warning("[%s] mark_production_complete failed (continuing): %s", channel.slug, e)
+
+    return {
+        "channel": channel.slug,
+        "title": short_title,
+        "short_id": short_video_id,
+        "short_url": f"https://youtube.com/shorts/{short_video_id}",
+        "kind": "short",
+    }
 
 
 # =============================================================================
