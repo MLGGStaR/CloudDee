@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Methodology — CloudDee</title>
+  <meta name="description" content="The CloudDee editorial methodology: how we ingest, score, write, narrate, and publish documentary breakdowns of US public records.">
+  <style>
+    :root { color-scheme: dark; --gold: #f5d067; --navy: #0c2d48; --navy2: #1e3a5a; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+      margin: 0; padding: 0;
+      background: var(--navy); color: #f1f5f9; line-height: 1.6;
+    }
+    .container { max-width: 820px; margin: 0 auto; padding: 0 24px; }
+    header.site {
+      background: rgba(8, 22, 40, 0.95);
+      border-bottom: 1px solid var(--navy2);
+      position: sticky; top: 0; z-index: 10;
+      backdrop-filter: blur(8px);
+    }
+    header.site .inner {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 24px; max-width: 1100px; margin: 0 auto;
+    }
+    header.site .brand {
+      color: var(--gold); font-weight: 700; font-size: 20pt;
+      letter-spacing: 0.04em; text-decoration: none;
+    }
+    header.site nav a {
+      color: #cbd5e1; margin-left: 18px; text-decoration: none; font-size: 11pt;
+    }
+    header.site nav a:hover { color: var(--gold); }
+
+    main { padding: 48px 0; }
+    h1 { color: var(--gold); font-size: 28pt; margin: 0 0 8px; }
+    h2 { color: var(--gold); font-size: 16pt; margin-top: 36px; padding-bottom: 6px;
+         border-bottom: 1px solid var(--navy2); }
+    h3 { color: var(--gold); font-size: 12pt; margin-top: 22px; }
+    p { color: #e2e8f0; margin: 12px 0; }
+    ul { color: #e2e8f0; padding-left: 22px; }
+    li { margin: 6px 0; }
+    a { color: var(--gold); }
+    .updated { color: #94a3b8; font-size: 10pt; }
+    .step {
+      background: #0a2238; border-left: 3px solid var(--gold);
+      padding: 16px 20px; border-radius: 4px; margin: 16px 0;
+    }
+    footer.site {
+      padding: 32px 0; color: #94a3b8; font-size: 10pt; text-align: center;
+      border-top: 2px solid var(--gold);
+    }
+    footer.site a { color: #94a3b8; margin: 0 8px; }
+  </style>
+</head>
+<body>
+  <header class="site">
+    <div class="inner">
+      <a class="brand" href="index.html">CLOUDDEE</a>
+      <nav>
+        <a href="index.html#about">About</a>
+        <a href="index.html#sources">Sources</a>
+        <a href="methodology.html">Methodology</a>
+        <a href="episodes.html">Episodes</a>
+        <a href="index.html#faq">FAQ</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <h1>Methodology</h1>
+      <p class="updated">How CloudDee turns federal public records into watchable case files. Last updated: May 13, 2026.</p>
+
+      <p>
+        This page documents the editorial pipeline behind every CloudDee
+        video. Transparency about how the channel is produced is part of
+        the editorial standards we publish under.
+      </p>
+
+      <h2>1. Ingestion</h2>
+      <p>
+        Once per day, an automated job pulls newly released documents from
+        five US Government sources of record:
+      </p>
+      <ul>
+        <li>NTSB CAROL public API (aviation accident reports)</li>
+        <li>NTSB CAROL public API (marine accident reports)</li>
+        <li>justice.gov press releases (RSS feed)</li>
+        <li>courtlistener.com (US federal court opinions and dockets, via the Free Law Project's free API)</li>
+        <li>sec.gov EDGAR full-text search (8-K filings and litigation releases)</li>
+      </ul>
+      <p>
+        Only public documents published in the last 7 days are considered.
+        Each record is stored with its source URL, publication timestamp,
+        title, and a normalized plain-text body for downstream processing.
+      </p>
+
+      <h2>2. Scoring</h2>
+      <p>
+        Each new record is evaluated by an AI language model under a strict
+        editorial rubric. The model produces three independent scores from
+        1 to 10:
+      </p>
+      <div class="step">
+        <strong>Drama</strong> — how compelling the underlying facts are to a
+        general audience. A multimillion-dollar fraud scores high; a
+        procedural docket entry scores low.
+      </div>
+      <div class="step">
+        <strong>Novelty</strong> — how unusual the case is. Routine
+        fender-bender investigations score low; first-of-its-kind charges
+        or unusual fact patterns score high.
+      </div>
+      <div class="step">
+        <strong>Visualizability</strong> — how well the events can be
+        evoked through stock imagery and AI illustration. A plane crash
+        scores high; an abstract regulatory dispute scores low.
+      </div>
+      <p>
+        The model also produces structured safety flags: whether the case
+        is sealed, whether minors are identifiably involved, whether the
+        matter is primarily about sexual violence against an identifiable
+        victim, and whether the source materials raise defamation risk.
+        Any positive flag <em>excludes</em> the record from production.
+      </p>
+
+      <h2>3. Selection</h2>
+      <p>
+        Records above the quality floor (a combined score of at least 10
+        out of 30, excluding flagged records) become candidates. From this
+        pool the system picks:
+      </p>
+      <ul>
+        <li>One <em>long-form</em> documentary (5–10 minutes), the top-ranked
+            unproduced record</li>
+        <li>Three <em>Shorts</em> (under 60 seconds each), the next
+            candidates from the same pool — one a recap of the long-form,
+            two standalone</li>
+      </ul>
+
+      <h2>4. Script writing</h2>
+      <p>
+        For each selected record, an AI language model writes the narration
+        under a per-source-type editorial system prompt (one for aviation,
+        one for federal court, one for SEC enforcement). The prompt
+        enforces:
+      </p>
+      <ul>
+        <li>Presumption of innocence framing for unconvicted parties</li>
+        <li>Source citation by domain only ("data.ntsb.gov"), never by
+            full URL or case number, to keep narration listenable</li>
+        <li>Stable scene structure (hook, setup, incident, investigation,
+            takeaway, closing) so the editor can apply music and visual
+            cues consistently</li>
+        <li>Variation requirements on the hook so videos don't open the
+            same way every day</li>
+      </ul>
+
+      <h2>5. Voicing</h2>
+      <p>
+        The script is synthesized to audio using OpenAI's TTS-HD model.
+        Four narrator voices rotate per record (chosen deterministically
+        from the record's identifier) so the channel doesn't sound like one
+        relentless monologue. The narration is then transcribed back to
+        time-aligned captions using OpenAI's Whisper model, so on-screen
+        subtitles match the actual delivery rather than the script.
+      </p>
+
+      <h2>6. Visuals</h2>
+      <p>
+        Each scene's b-roll comes first from <a href="https://pexels.com" target="_blank">Pexels</a>
+        (licensed stock photography and video, filtered to minimum 1080p
+        resolution). Where stock returns nothing relevant — a recreated
+        cockpit scene, a specific aircraft model — the system falls back
+        to AI-generated imagery (OpenAI gpt-image-1). Both layers are
+        composited with Ken Burns motion in FFmpeg.
+      </p>
+
+      <h2>7. Mastering and publishing</h2>
+      <p>
+        Audio is normalized to broadcast-standard loudness (−16 LUFS),
+        subtitles are burned in, an outro card with the channel branding
+        is appended, and the final 1080p (or 1080×1920 vertical for Shorts)
+        mp4 is uploaded to YouTube via the YouTube Data API and to TikTok
+        via the TikTok Content Posting API. Captions are uploaded
+        separately as an SRT track for accessibility. A channel-owner
+        comment with the related long-form URL is posted on every Short.
+      </p>
+
+      <h2>8. Disclosure</h2>
+      <p>
+        Every video upload includes a written disclosure in its description
+        stating that narration is AI-synthesized and some imagery is
+        AI-generated. The "altered or synthetic content" metadata flag is
+        set on every upload. We do not impersonate any real person's voice
+        or likeness.
+      </p>
+
+      <h2>9. Corrections</h2>
+      <p>
+        If a video contains a factual error, we accept correction requests
+        at <a href="mailto:thememesofdoom@gmail.com">thememesofdoom@gmail.com</a>.
+        Corrections are processed within 7 business days and applied via
+        description edits, pinned correction comments, or video removal
+        depending on severity. We do not silently rewrite uploaded
+        content.
+      </p>
+
+      <p style="margin-top: 40px;">
+        <a href="index.html">← Back to CloudDee home</a>
+      </p>
+    </div>
+  </main>
+
+  <footer class="site">
+    <div class="container">
+      &copy; CloudDee &middot;
+      <a href="terms.html">Terms of Service</a> &middot;
+      <a href="privacy.html">Privacy Policy</a> &middot;
+      <a href="methodology.html">Methodology</a> &middot;
+      <a href="https://www.youtube.com/@CloudDaily1" target="_blank">YouTube</a>
+    </div>
+  </footer>
+</body>
+</html>

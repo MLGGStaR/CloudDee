@@ -4,80 +4,306 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CloudDee — Daily Public-Record Breakdowns</title>
-  <meta name="description" content="CloudDee is a daily YouTube and TikTok channel producing automated documentary-style breakdowns of newly released US public records — NTSB aviation reports, federal court filings, SEC enforcement actions, and Department of Justice press releases.">
+  <meta name="description" content="CloudDee publishes daily documentary breakdowns of newly released US public records — NTSB aviation reports, federal court filings, SEC enforcement actions, and DOJ press releases.">
   <!-- TikTok URL verification meta tag goes here when prompted:
        <meta name="tiktok-developers-site-verification" content="VALUE_FROM_TIKTOK"> -->
   <style>
-    :root { color-scheme: dark; }
+    :root { color-scheme: dark; --gold: #f5d067; --navy: #0c2d48; --navy2: #1e3a5a; }
+    * { box-sizing: border-box; }
     body {
       font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-      max-width: 720px; margin: 40px auto; padding: 0 24px;
-      background: #0c2d48; color: #f1f5f9; line-height: 1.6;
+      margin: 0; padding: 0;
+      background: var(--navy); color: #f1f5f9; line-height: 1.6;
     }
-    header { border-bottom: 2px solid #f5d067; padding-bottom: 16px; margin-bottom: 24px; }
-    h1 { color: #f5d067; font-size: 36pt; margin: 0; letter-spacing: 0.02em; }
-    h2 { color: #f5d067; margin-top: 28px; }
-    a { color: #f5d067; }
-    .tagline { color: #cbd5e1; font-size: 14pt; margin-top: 8px; }
-    nav { margin-top: 28px; }
-    nav a { margin-right: 18px; }
-    section { margin-top: 28px; }
-    footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid #1e3a5a;
-             font-size: 11pt; color: #94a3b8; }
+    .container { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+
+    /* Sticky top nav */
+    header.site {
+      background: rgba(8, 22, 40, 0.95);
+      border-bottom: 1px solid var(--navy2);
+      position: sticky; top: 0; z-index: 10;
+      backdrop-filter: blur(8px);
+    }
+    header.site .inner {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 24px; max-width: 1100px; margin: 0 auto;
+    }
+    header.site .brand {
+      color: var(--gold); font-weight: 700; font-size: 20pt;
+      letter-spacing: 0.04em; text-decoration: none;
+    }
+    header.site nav a {
+      color: #cbd5e1; margin-left: 18px; text-decoration: none; font-size: 11pt;
+    }
+    header.site nav a:hover { color: var(--gold); }
+
+    /* Hero */
+    .hero { padding: 64px 0 48px; border-bottom: 1px solid var(--navy2); }
+    .hero h1 {
+      color: var(--gold); font-size: 44pt; margin: 0; letter-spacing: 0.02em;
+      line-height: 1.05;
+    }
+    .hero .tagline { color: #e2e8f0; font-size: 16pt; margin-top: 16px; max-width: 720px; }
+    .hero .cta {
+      display: inline-block; margin-top: 28px; padding: 12px 24px;
+      background: var(--gold); color: #0c2d48; font-weight: 700;
+      border-radius: 30px; text-decoration: none;
+    }
+
+    /* Sections */
+    section { padding: 48px 0; border-bottom: 1px solid var(--navy2); }
+    section.last { border-bottom: 0; }
+    section h2 { color: var(--gold); font-size: 22pt; margin: 0 0 16px; }
+    section h3 { color: var(--gold); font-size: 14pt; margin-top: 20px; }
+    section p { margin: 12px 0; color: #e2e8f0; }
+    section ul { color: #e2e8f0; margin: 12px 0; padding-left: 20px; }
+    section li { margin: 6px 0; }
+    a { color: var(--gold); }
+
+    /* Three-column source grid */
+    .source-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px; margin-top: 24px;
+    }
+    .source-card {
+      background: #0a2238; border: 1px solid var(--navy2);
+      border-radius: 8px; padding: 20px;
+    }
+    .source-card h3 { margin: 0 0 8px; font-size: 13pt; }
+    .source-card .src { color: #94a3b8; font-size: 9pt; text-transform: uppercase;
+                       letter-spacing: 0.1em; }
+
+    /* Embedded video */
+    .embed { position: relative; padding-bottom: 56.25%; height: 0; margin: 20px 0; }
+    .embed iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+                    border: 0; border-radius: 8px; }
+
+    /* FAQ */
+    details {
+      background: #0a2238; border: 1px solid var(--navy2);
+      border-radius: 6px; padding: 14px 18px; margin-top: 12px;
+    }
+    details summary { cursor: pointer; color: var(--gold); font-weight: 600; }
+    details[open] { padding-bottom: 18px; }
+    details p { margin: 12px 0 0; }
+
+    footer.site {
+      padding: 32px 0; color: #94a3b8; font-size: 10pt; text-align: center;
+      border-top: 2px solid var(--gold);
+    }
+    footer.site a { color: #94a3b8; margin: 0 8px; }
   </style>
 </head>
 <body>
-  <header>
-    <h1>CLOUDDEE</h1>
-    <div class="tagline">Daily public-record breakdowns. New case files every day.</div>
+  <header class="site">
+    <div class="inner">
+      <a class="brand" href="index.html">CLOUDDEE</a>
+      <nav>
+        <a href="#about">About</a>
+        <a href="#sources">Sources</a>
+        <a href="methodology.html">Methodology</a>
+        <a href="episodes.html">Episodes</a>
+        <a href="#faq">FAQ</a>
+        <a href="https://www.youtube.com/@CloudDaily1" target="_blank">YouTube</a>
+      </nav>
+    </div>
   </header>
 
-  <nav>
-    <a href="https://www.youtube.com/@CloudDaily1">YouTube</a>
-    <a href="terms.html">Terms of Service</a>
-    <a href="privacy.html">Privacy Policy</a>
-  </nav>
+  <div class="hero">
+    <div class="container">
+      <h1>Daily public-record breakdowns.</h1>
+      <p class="tagline">
+        CloudDee publishes documentary-style breakdowns of newly released US
+        public records — NTSB aviation accident reports, federal court filings,
+        SEC enforcement actions, and Department of Justice press releases.
+        Cited primary sources on every video.
+      </p>
+      <a class="cta" href="https://www.youtube.com/@CloudDaily1" target="_blank">Watch on YouTube →</a>
+    </div>
+  </div>
 
-  <section>
-    <h2>About CloudDee</h2>
-    <p>
-      CloudDee is an editorial channel publishing documentary-style breakdowns of
-      newly released US public records — NTSB aviation and marine accident reports,
-      federal court opinions, Department of Justice press releases, and SEC
-      enforcement actions. Every video is sourced to the original public-record
-      document, which is cited in the description.
-    </p>
-    <p>
-      Narration is synthesized by AI from editorial scripts written from the
-      cited primary sources. Visuals combine licensed stock imagery with
-      AI-generated illustrations. The channel discloses this on every upload.
-    </p>
+  <section id="about">
+    <div class="container">
+      <h2>What CloudDee Is</h2>
+      <p>
+        CloudDee is an editorial channel that turns dense, jargon-heavy
+        public-record documents into clear, watchable case files for general
+        audiences. We focus on records that were freshly released in the
+        last 72 hours by federal agencies and federal courts of record.
+      </p>
+      <p>
+        Each video is anchored to a specific, citable public document — an
+        NTSB accident report, a federal indictment, an SEC litigation
+        release, a DOJ press release. The document's URL is printed in
+        every video description. Nothing in our videos is fabricated:
+        every fact traces back to the cited source.
+      </p>
+
+      <h3>Recent featured case</h3>
+      <p>
+        A representative example of the kind of editorial we publish:
+      </p>
+      <div class="embed">
+        <iframe src="https://www.youtube.com/embed/videoseries?list=UUTdLxl1HK_nvcs1AOnN9xVg"
+                title="CloudDee channel uploads"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowfullscreen></iframe>
+      </div>
+    </div>
   </section>
 
-  <section>
-    <h2>Editorial Standards</h2>
-    <ul>
-      <li>Every fact is drawn from the cited public-record document.</li>
-      <li>Allegations against uncharged or unconvicted parties are characterized
-          as allegations, consistent with the underlying source.</li>
-      <li>Sealed cases, identified minors, and matters of sexual violence
-          against identifiable victims are filtered out before publication.</li>
-      <li>Corrections are accepted via the comments on each video and addressed
-          publicly.</li>
-    </ul>
+  <section id="sources">
+    <div class="container">
+      <h2>Sources We Cover</h2>
+      <p>
+        CloudDee draws exclusively from official US Government sources of record.
+        Each source contributes a different kind of public document:
+      </p>
+      <div class="source-grid">
+        <div class="source-card">
+          <div class="src">data.ntsb.gov</div>
+          <h3>NTSB — Aviation</h3>
+          <p>National Transportation Safety Board accident and incident reports
+          on civil aviation. Probable cause findings, sequence of events,
+          contributing factors, regulatory recommendations.</p>
+        </div>
+        <div class="source-card">
+          <div class="src">data.ntsb.gov</div>
+          <h3>NTSB — Marine</h3>
+          <p>NTSB investigations of US-flagged commercial vessels and
+          incidents in US navigable waters — collisions, groundings,
+          fires, sinkings.</p>
+        </div>
+        <div class="source-card">
+          <div class="src">justice.gov</div>
+          <h3>DOJ Press Releases</h3>
+          <p>US Attorneys' Office and Justice Department press releases
+          covering indictments, guilty pleas, sentencings, and civil
+          enforcement actions.</p>
+        </div>
+        <div class="source-card">
+          <div class="src">courtlistener.com</div>
+          <h3>Federal Court Filings</h3>
+          <p>Docket entries, opinions, and orders from US District Courts
+          and Courts of Appeals, surfaced via the Free Law Project's
+          CourtListener archive.</p>
+        </div>
+        <div class="source-card">
+          <div class="src">sec.gov</div>
+          <h3>SEC Enforcement</h3>
+          <p>Securities and Exchange Commission litigation releases,
+          administrative proceedings, and 8-K material-event filings
+          relating to enforcement actions and fraud cases.</p>
+        </div>
+        <div class="source-card">
+          <div class="src">methodology</div>
+          <h3>How We Pick</h3>
+          <p>An automated daily ingestion ranks new records by drama,
+          novelty, and visualizability. The top-ranked items become videos.
+          <a href="methodology.html">Full methodology →</a></p>
+        </div>
+      </div>
+    </div>
   </section>
 
-  <section>
-    <h2>Contact</h2>
-    <p>
-      For corrections, takedown requests, business inquiries, or press contact:
-      <a href="mailto:thememesofdoom@gmail.com">thememesofdoom@gmail.com</a>.
-    </p>
+  <section id="standards">
+    <div class="container">
+      <h2>Editorial Standards</h2>
+      <ul>
+        <li><strong>Source-anchored.</strong> Every fact traces to the cited
+            public-record document. No off-source claims, no speculation
+            presented as fact.</li>
+        <li><strong>Presumption of innocence.</strong> Allegations against
+            uncharged or unconvicted parties are characterized as allegations
+            ("alleged," "according to the indictment"), matching how the
+            underlying source frames them.</li>
+        <li><strong>Filtered exclusions.</strong> Sealed cases, proceedings
+            with identified minors, and matters involving sexual violence
+            against identifiable victims are filtered out before scripting.</li>
+        <li><strong>AI-content disclosure.</strong> Narration is synthesized
+            via text-to-speech from editorial scripts; some imagery is
+            AI-generated. Disclosed in every video description and in each
+            upload's platform metadata.</li>
+        <li><strong>Public corrections.</strong> Errors are corrected via
+            video-description edits and pinned correction comments. We do
+            not silently rewrite history.</li>
+      </ul>
+    </div>
   </section>
 
-  <footer>
-    &copy; CloudDee. All cited public-record content is the property of its
-    original publisher (US Government, court of record, or named agency).
+  <section id="faq">
+    <div class="container">
+      <h2>FAQ</h2>
+
+      <details>
+        <summary>How often do you publish?</summary>
+        <p>Approximately one long-form documentary (5–10 minutes) and three
+        Shorts (under 60 seconds each) per day, seven days a week.</p>
+      </details>
+
+      <details>
+        <summary>Is this human-written or AI-generated?</summary>
+        <p>The editorial pipeline is automated. Scripts are written from the
+        cited primary-source documents by an AI language model under a
+        documented editorial system prompt. Narration is then synthesized
+        via text-to-speech. Some imagery is AI-generated; the rest is
+        licensed stock photography. This is disclosed on every video.</p>
+      </details>
+
+      <details>
+        <summary>I'm named in a video. How do I request a correction or removal?</summary>
+        <p>Email <a href="mailto:thememesofdoom@gmail.com">thememesofdoom@gmail.com</a>
+        with the video URL and the basis for the request. We respond to
+        verified corrections within 7 business days. We do not gatekeep
+        names that appear in unsealed public records, but we will edit
+        framing, descriptions, or remove videos where the request is
+        reasonable.</p>
+      </details>
+
+      <details>
+        <summary>Are you affiliated with any agency you cover?</summary>
+        <p>No. CloudDee is independent of NTSB, DOJ, SEC, the federal
+        judiciary, and any other agency whose records we cover. No
+        relationship, no funding, no editorial input from any of them.</p>
+      </details>
+
+      <details>
+        <summary>Where can I see your most recent uploads?</summary>
+        <p>The full archive lives on our <a href="https://www.youtube.com/@CloudDaily1"
+        target="_blank">YouTube channel</a> and is also being syndicated to
+        TikTok. See the <a href="episodes.html">Episodes page</a> for the
+        most recent.</p>
+      </details>
+
+      <details>
+        <summary>Business / press inquiries?</summary>
+        <p>Email <a href="mailto:thememesofdoom@gmail.com">thememesofdoom@gmail.com</a>.</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="last" id="contact">
+    <div class="container">
+      <h2>Contact</h2>
+      <p>
+        Editorial corrections, takedown requests, press inquiries, business
+        questions: <a href="mailto:thememesofdoom@gmail.com">thememesofdoom@gmail.com</a>.
+      </p>
+      <p>
+        We aim to acknowledge correction requests within 48 hours and act on
+        verified ones within 7 business days.
+      </p>
+    </div>
+  </section>
+
+  <footer class="site">
+    <div class="container">
+      &copy; CloudDee &middot;
+      <a href="terms.html">Terms of Service</a> &middot;
+      <a href="privacy.html">Privacy Policy</a> &middot;
+      <a href="methodology.html">Methodology</a> &middot;
+      <a href="https://www.youtube.com/@CloudDaily1" target="_blank">YouTube</a>
+    </div>
   </footer>
 </body>
 </html>
