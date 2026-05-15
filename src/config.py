@@ -67,20 +67,6 @@ class Settings:
     timezone: str
     channels: list[Channel] = field(default_factory=list)
     sources: dict[str, Source] = field(default_factory=dict)
-    # TikTok (optional — feature off if any of the three are empty)
-    tiktok_client_key: str = ""
-    tiktok_client_secret: str = ""
-    tiktok_refresh_token: str = ""
-    tiktok_privacy: str = "SELF_ONLY"   # set to PUBLIC_TO_EVERYONE post-audit
-
-    @property
-    def tiktok_enabled(self) -> bool:
-        """All three pieces required — missing any disables TikTok uploads."""
-        return bool(
-            self.tiktok_client_key
-            and self.tiktok_client_secret
-            and self.tiktok_refresh_token
-        )
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -155,10 +141,6 @@ def load_settings() -> Settings:
         timezone=_env("DOCKET_TIMEZONE", "America/New_York"),
         channels=_load_channels(),
         sources=_load_sources(),
-        tiktok_client_key=_env("TIKTOK_CLIENT_KEY"),
-        tiktok_client_secret=_env("TIKTOK_CLIENT_SECRET"),
-        tiktok_refresh_token=_env("TIKTOK_REFRESH_TOKEN"),
-        tiktok_privacy=_env("TIKTOK_PRIVACY", "SELF_ONLY"),
     )
     # Also strip the YT refresh tokens themselves — same paste-with-newline risk.
     s.yt_refresh_tokens = {k: (v or "").strip() for k, v in s.yt_refresh_tokens.items()}
